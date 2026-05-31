@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "codehound"
+version = "0.1.0"
+description = "An AST-based static analyzer that hunts real correctness and async-safety bugs in Python code."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Abhinav Tarigoppula" }]
+keywords = ["static-analysis", "linter", "ast", "asyncio", "bug-finder"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/kratos0718/codehound"
+Issues = "https://github.com/kratos0718/codehound/issues"
+
+[project.scripts]
+codehound = "codehound.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/codehound"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
