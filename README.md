@@ -12,6 +12,25 @@ Each of the six checks below isn't theoretical. **I wrote it after finding — a
 
 ---
 
+## See it in action
+
+Pointing `codehound` at [agno](https://github.com/agno-agi/agno) (a 25k⭐ AI agent framework) surfaced real, previously-unreported bugs:
+
+```console
+$ codehound scan agno/libs/agno/agno --select CH001,CH006
+
+agno/integrations/discord/client.py:90:26: CH001 `requests.get()` blocks the event loop
+    inside async function `on_message`; use the async equivalent.
+agno/tracing/exporter.py:112:16: CH006 `asyncio.create_task(...)` result is discarded;
+    keep a reference (the loop only holds a weak ref, so the task may be GC'd mid-run).
+
+Found 2 issue(s) (CH001: 1, CH006: 1)
+```
+
+**Both of these became merged/​open fixes upstream.** The first froze the Discord bot's event loop on every video/document attachment; the second could silently drop telemetry when its export task was garbage-collected mid-run. `codehound` found them in seconds — see [`docs/FINDINGS.md`](docs/FINDINGS.md) for the full provenance of every rule.
+
+---
+
 ## Why this exists
 
 I was contributing bug fixes to large AI frameworks and noticed the same handful of mistakes recurring across codebases. Instead of hunting them by hand, I encoded each one as an AST rule. `codehound` is the result: point it at a repo and it finds the bugs I'd otherwise have to read 100k lines to spot.
