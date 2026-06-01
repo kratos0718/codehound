@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import ast
 
-from codehound.core import Check, Finding, enclosing_function
+from codehound.core import Check, Finding, enclosing_function, is_awaited
 
 # (module, attribute) pairs that block the calling thread.
 _BLOCKING_CALLS = {
@@ -64,6 +64,10 @@ class BlockingCallInAsync(Check):
             else:
                 continue
             if (module, func.attr) not in _BLOCKING_CALLS:
+                continue
+            # An awaited call (e.g. `await client.post(...)`) does not block the
+            # event loop, even if the receiver name collides with a sync library.
+            if is_awaited(node, parents):
                 continue
             fn = enclosing_function(node, parents)
             if fn is None or not isinstance(fn, ast.AsyncFunctionDef):

@@ -44,6 +44,27 @@ def test_ch001_ignores_sleep_in_sync_function():
     assert _run(code, ["CH001"]) == []
 
 
+def test_ch001_ignores_awaited_call_on_sync_named_receiver():
+    # A local variable named `requests` that is actually an async client; the
+    # call is awaited, so it does not block the loop. (Real false positive seen
+    # in AutoGPT's MCP client.)
+    code = (
+        "async def f(self):\n"
+        "    requests = AsyncClient()\n"
+        "    response = await requests.post(self.url, json={})\n"
+    )
+    assert _run(code, ["CH001"]) == []
+
+
+def test_ch001_still_flags_unawaited_blocking_call_in_async():
+    code = (
+        "import requests\n"
+        "async def f(url):\n"
+        "    return requests.get(url)\n"
+    )
+    assert len(_run(code, ["CH001"])) == 1
+
+
 def test_ch001_ignores_await_asyncio_sleep():
     code = (
         "import asyncio\n"

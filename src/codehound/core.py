@@ -110,6 +110,17 @@ def enclosing_function(node: ast.AST, parents: dict):
     return None
 
 
+def is_awaited(node: ast.AST, parents: dict) -> bool:
+    """True if the call ``node`` is the direct operand of an ``await``.
+
+    ``await client.get(...)`` does not block the event loop even though the
+    receiver/attribute name might look like a synchronous library (e.g. a local
+    variable also named ``requests`` that is actually an async HTTP client).
+    """
+    parent = parents.get(id(node))
+    return isinstance(parent, ast.Await)
+
+
 def inside_with_statement(node: ast.AST, parents: dict) -> bool:
     """True if ``node`` is (transitively) inside a with/async-with, stopping at
     the enclosing function/class/module boundary."""
