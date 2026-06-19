@@ -25,11 +25,21 @@ Upload bundle: **`~/Downloads/arxiv_codehound_submission.tar.gz`** (contains `pa
 
 ---
 
-## 2. ⚠️ The real hurdle: ENDORSEMENT (read this first)
-arXiv requires first-time submitters in `cs.*` to be **endorsed**, unless you're auto-endorsed. You are likely **NOT** auto-endorsed with a gmail address.
-- **Best fix:** register/submit with a **GITAM institutional email** if you have one — academic domains often grant auto-endorsement.
-- **Otherwise:** you need an **endorsement code** from someone who has published in `cs.SE` on arXiv (a professor, senior, or any contact with arXiv cs.SE papers). arXiv shows you an endorsement link/code when you try to submit; you send it to your endorser.
-- This is per-category, and it's the #1 thing that stalls new submitters — sort it before you start.
+## 2. ⚠️ The real hurdle: ENDORSEMENT — and the GITAM email fix
+arXiv requires first-time submitters in `cs.*` to be **endorsed**. With a gmail address you are likely **NOT** auto-endorsed. **Use your GITAM email — it's the easy path.**
+
+**Your worry ("I'll lose access when I graduate") is based on a misconception — here's the truth:**
+- An **arXiv account is permanent.** Your papers and account are **never** deleted if your college email later stops working. Once a paper is up, it's public and citable forever.
+- You do **NOT** need to log in with the GITAM email. Keep your **gmail as the account login + recovery**, and just **ADD the GITAM email as a secondary/verified email** on the same account (arXiv account settings → add email → verify). That verified academic affiliation is what can trigger **auto-endorsement** — without ever risking your access.
+- So: gmail = how you keep the account forever; GITAM email = the key that unlocks endorsement. Best of both, zero downside.
+
+**Steps:**
+1. Log into your existing arXiv account (gmail).
+2. Account settings → add your **GITAM email** (e.g. `...@gitam.in` / `gitam.edu`) → verify it from your college inbox.
+3. Try the `cs.SE` submission. If arXiv auto-endorses you (common from academic domains), you're through.
+4. If it still asks for endorsement, request the **endorsement code** from a professor/senior who has an arXiv `cs.SE` paper (Dr. Mahanty or any cs-publishing contact) — endorsement is per-category and takes them one click.
+
+Do this **before** you start the submission — it's the #1 thing that stalls first-timers.
 
 ## 3. Step-by-step
 1. Create/verify your arXiv account (✅ you've done this) and confirm the email.
