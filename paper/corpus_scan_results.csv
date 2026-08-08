@@ -16,13 +16,12 @@ mem0ai/mem0,58434,06d33f6,45017,0,0,0,0,0,0,0
 guidance-ai/guidance,21497,21b1d90,12323,0,0,0,1,0,0,1
 langflow-ai/langflow,149594,3a8f48b,269237,2,2,0,35,0,0,39
 deepset-ai/haystack,25552,acbf725,55613,0,0,0,0,0,0,0
-explodinggradients/ragas,?,298b682,35903,0,9,1,6,0,0,16
+explodinggradients/ragas,15181,298b682,35903,0,9,1,6,0,0,16
 unslothai/unsloth,66333,31439d9,176730,0,19,0,2,1,0,22
 Lightning-AI/litgpt,13422,a650062,21102,0,0,0,0,0,0,0
 chroma-core/chroma,28402,b8bf764,39085,0,6,0,2,0,0,8
 khoj-ai/khoj,35089,9258f57,34725,2,112,0,3,0,3,120
 jina-ai/serve,21864,0f32b2a,41443,1,29,3,7,0,2,42
-mindsdb/mindsdb,?,a20c2f8,,0,0,0,0,0,0,0
 bentoml/BentoML,8672,73c4dbe,62488,0,3,0,10,1,1,15
 PrefectHQ/prefect,22593,ea26f8b,310613,2,38,0,5,0,1,46
 openai/openai-agents-python,27110,d8068d9,93253,0,0,0,0,0,7,7
