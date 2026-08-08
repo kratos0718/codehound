@@ -18,8 +18,8 @@ identifiers:
     value: "10.5281/zenodo.21851079"
     description: Concept DOI resolving to the latest release
   - type: doi
-    value: "10.5281/zenodo.21851080"
-    description: Version DOI for release v1.0.1
+    value: "10.5281/zenodo.21851148"
+    description: Version DOI for release v1.0.2
 abstract: >-
   codehound is a zero-dependency static analyzer built on
   Python's standard-library ast module. It detects six
