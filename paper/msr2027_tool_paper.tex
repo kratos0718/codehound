@@ -36,7 +36,9 @@ static analysis, abstract syntax trees, asyncio, concurrency defects, resource l
 \section{Introduction}
 \texttt{asyncio} is cooperative, single-threaded concurrency: one event loop interleaves many tasks and switches only at \texttt{await} points. Between awaits, whatever runs monopolizes the loop. That single property underlies a class of defects which are unusually hard to observe dynamically. A synchronous \texttt{time.sleep} inside an \texttt{async def} freezes every in-flight request; a task created with a bare \texttt{asyncio.create\_task(...)} whose handle is discarded may be garbage-collected before it completes, so the work silently never happens. Neither raises an exception, and neither fails a unit test.
 
-These patterns are well understood in principle, yet we found them in production paths of some of the most heavily used AI frameworks on GitHub. This artifact paper contributes:
+These patterns are well understood in principle, yet we found them in production paths of some of the most heavily used AI frameworks on GitHub. That they persist there is consistent with two established observations: that real-world concurrency defects concentrate in a small number of recurring patterns rather than exotic ones~\cite{lu2008}, and that machine-learning systems accumulate maintenance burden in the ordinary software surrounding the model rather than in the model itself~\cite{sculley2015}. Empirical work on deep-learning frameworks has likewise found defect classes that produce no crash and no error message, and so survive testing~\cite{silentbugs,dlbugs}; the defects we target share that property.
+
+This artifact paper contributes:
 
 \begin{enumerate}
   \item \textbf{codehound}, an open-source, zero-dependency AST analyzer detecting six concurrency- and resource-management defect classes (Section~\ref{sec:tool}).
@@ -65,7 +67,7 @@ codehound parses each file with the standard-library \texttt{ast} module and pre
 Two design decisions target precision rather than recall, and both were motivated by false positives observed during upstream submission. CH001 ignores awaited calls, so \texttt{await client.get(...)} is not flagged merely because the receiver resembles a synchronous library. CH006 flags only bare expression statements, so a task assigned to a variable, awaited, returned, or handed to a \texttt{TaskGroup} is not reported. Deliberately, codehound has no third-party dependencies: it runs anywhere a Python interpreter runs, which matters for scanning a large corpus of projects with mutually incompatible dependency trees.
 
 \subsection{Relation to existing linters}
-Mature linters already cover parts of this space, and we do not claim otherwise: \texttt{flake8-bugbear} B006 detects mutable defaults, and Ruff implements both that rule and RUF006 for discarded task handles, alongside an \texttt{ASYNC} family targeting blocking calls. Where those tools are engineered as general-purpose linters configured per project, codehound is engineered as a \emph{corpus instrument}. Three properties follow from that goal. It has no third-party dependencies and no configuration file, so it can be pointed at hundreds of unrelated repositories without resolving each project's toolchain. It emits a flat, machine-readable record per finding, which is what makes a cross-repository dataset cheap to assemble. And its rule set is deliberately small and fixed, so counts are comparable across repositories without normalising for divergent per-project lint configuration---a project that disables B006 in its own \texttt{pyproject.toml} still contributes CH002 counts here.
+Mature linters already cover parts of this space, and we do not claim otherwise: \texttt{flake8-bugbear}~\cite{bugbear} B006 detects mutable defaults, and Ruff~\cite{ruff} implements both that rule and RUF006 for discarded task handles, alongside an \texttt{ASYNC} family targeting blocking calls. Where those tools are engineered as general-purpose linters configured per project, codehound is engineered as a \emph{corpus instrument}. Three properties follow from that goal. It has no third-party dependencies and no configuration file, so it can be pointed at hundreds of unrelated repositories without resolving each project's toolchain. It emits a flat, machine-readable record per finding, which is what makes a cross-repository dataset cheap to assemble. And its rule set is deliberately small and fixed, so counts are comparable across repositories without normalising for divergent per-project lint configuration---a project that disables B006 in its own \texttt{pyproject.toml} still contributes CH002 counts here.
 
 The practical consequence is that our contribution is not a better mutable-default detector. It is a reproducible pipeline from ``popular Python AI/ML projects'' to ``a comparable per-rule defect table,'' plus the evidence in Section~\ref{sec:validation} that the findings it surfaces are ones maintainers act on.
 
@@ -172,9 +174,13 @@ The archive contains the analyzer source and test suite, CI configuration for Py
 The author thanks the maintainers of the projects listed in Table~\ref{tab:merged} for reviewing the submitted patches.
 
 \begin{thebibliography}{9}
-\bibitem{asyncio} Python Software Foundation, ``asyncio --- Asynchronous I/O,'' Python Standard Library Documentation.
-\bibitem{ruff} Astral, ``Ruff: An extremely fast Python linter,'' \url{https://github.com/astral-sh/ruff}.
-\bibitem{bugbear} ``flake8-bugbear,'' \url{https://github.com/PyCQA/flake8-bugbear}.
+\bibitem{lu2008} S. Lu, S. Park, E. Seo, and Y. Zhou, ``Learning from mistakes: A comprehensive study on real world concurrency bug characteristics,'' in \emph{Proc. 13th Int. Conf. Architectural Support for Programming Languages and Operating Systems (ASPLOS)}, 2008.
+\bibitem{sculley2015} D. Sculley, G. Holt, D. Golovin, E. Davydov, T. Phillips, D. Ebner, V. Chaudhary, M. Young, J.-F. Crespo, and D. Dennison, ``Hidden technical debt in machine learning systems,'' in \emph{Advances in Neural Information Processing Systems (NIPS)}, 2015.
+\bibitem{silentbugs} F. Tambon, A. Nikanjam, L. An, F. Khomh, and G. Antoniol, ``Silent bugs in deep learning frameworks: An empirical study of Keras and TensorFlow,'' \emph{Empirical Software Engineering}, 2024. arXiv:2112.13314.
+\bibitem{dlbugs} J. Chen \emph{et al.}, ``A comprehensive empirical study on bug characteristics of deep learning frameworks,'' \emph{Information and Software Technology}, vol.~151, 2022.
+\bibitem{asyncio} Python Software Foundation, ``asyncio --- Asynchronous I/O,'' Python Standard Library Documentation. \url{https://docs.python.org/3/library/asyncio.html}
+\bibitem{ruff} Astral, ``Ruff: An extremely fast Python linter and code formatter,'' \url{https://github.com/astral-sh/ruff}
+\bibitem{bugbear} PyCQA, ``flake8-bugbear,'' \url{https://github.com/PyCQA/flake8-bugbear}
 \end{thebibliography}
 
 \end{document}
