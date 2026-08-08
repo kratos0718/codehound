@@ -1,0 +1,26 @@
+{
+  "title": "codehound: A Zero-Dependency AST Static Analyzer for Concurrency and Resource-Management Defects in Python AI/ML Frameworks",
+  "description": "<p>codehound is a zero-dependency static analyzer built on Python's standard-library <code>ast</code> module. It detects six classes of correctness and async-safety defect that recur in production Python AI/ML codebases:</p><ul><li><strong>CH001</strong> &mdash; event-loop-blocking calls inside <code>async</code> functions</li><li><strong>CH002</strong> &mdash; mutable default arguments</li><li><strong>CH003</strong> &mdash; deprecated <code>datetime.utcnow()</code></li><li><strong>CH004</strong> &mdash; deprecated <code>get_event_loop()</code></li><li><strong>CH005</strong> &mdash; unclosed file handles</li><li><strong>CH006</strong> &mdash; fire-and-forget tasks eligible for garbage collection mid-run</li></ul><p>Each rule is distilled from a defect found and fixed in a widely-used open-source AI/ML framework. Applied to a corpus of 29 popular frameworks, the analyzer identified 1,377 candidate defects; a subset of the resulting fixes were reviewed and merged upstream by project maintainers, providing external validation that the reported defects are genuine rather than false positives.</p><p>The archive includes the analyzer source (~750 LOC), its test suite, CI configuration, and the full corpus scan results used for the accompanying empirical study.</p>",
+  "upload_type": "software",
+  "license": "MIT",
+  "access_right": "open",
+  "creators": [
+    {
+      "name": "Tarigoppula, Abhinav",
+      "orcid": "0009-0005-1542-0221"
+    }
+  ],
+  "keywords": [
+    "static analysis",
+    "abstract syntax tree",
+    "Python",
+    "asyncio",
+    "concurrency defects",
+    "resource leaks",
+    "mining software repositories",
+    "empirical software engineering",
+    "machine learning frameworks",
+    "software quality"
+  ],
+  "language": "eng"
+}

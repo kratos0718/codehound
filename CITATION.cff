@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+title: >-
+  codehound: A Zero-Dependency AST Static Analyzer for
+  Concurrency and Resource-Management Defects in Python
+  AI/ML Frameworks
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - family-names: Tarigoppula
+    given-names: Abhinav
+    orcid: "https://orcid.org/0009-0005-1542-0221"
+repository-code: "https://github.com/kratos0718/codehound"
+abstract: >-
+  codehound is a zero-dependency static analyzer built on
+  Python's standard-library ast module. It detects six
+  classes of correctness and async-safety defect that recur
+  in production Python AI/ML codebases: event-loop-blocking
+  calls inside async functions, mutable default arguments,
+  deprecated datetime.utcnow(), deprecated
+  get_event_loop(), unclosed file handles, and
+  fire-and-forget tasks eligible for garbage collection
+  mid-run. Each rule is distilled from a defect found and
+  fixed in a widely-used open-source AI/ML framework.
+keywords:
+  - static analysis
+  - abstract syntax tree
+  - Python
+  - asyncio
+  - concurrency defects
+  - resource leaks
+  - mining software repositories
+  - empirical software engineering
+license: MIT
+version: 1.0.0
