@@ -64,6 +64,11 @@ codehound parses each file with the standard-library \texttt{ast} module and pre
 
 Two design decisions target precision rather than recall, and both were motivated by false positives observed during upstream submission. CH001 ignores awaited calls, so \texttt{await client.get(...)} is not flagged merely because the receiver resembles a synchronous library. CH006 flags only bare expression statements, so a task assigned to a variable, awaited, returned, or handed to a \texttt{TaskGroup} is not reported. Deliberately, codehound has no third-party dependencies: it runs anywhere a Python interpreter runs, which matters for scanning a large corpus of projects with mutually incompatible dependency trees.
 
+\subsection{Relation to existing linters}
+Mature linters already cover parts of this space, and we do not claim otherwise: \texttt{flake8-bugbear} B006 detects mutable defaults, and Ruff implements both that rule and RUF006 for discarded task handles, alongside an \texttt{ASYNC} family targeting blocking calls. Where those tools are engineered as general-purpose linters configured per project, codehound is engineered as a \emph{corpus instrument}. Three properties follow from that goal. It has no third-party dependencies and no configuration file, so it can be pointed at hundreds of unrelated repositories without resolving each project's toolchain. It emits a flat, machine-readable record per finding, which is what makes a cross-repository dataset cheap to assemble. And its rule set is deliberately small and fixed, so counts are comparable across repositories without normalising for divergent per-project lint configuration---a project that disables B006 in its own \texttt{pyproject.toml} still contributes CH002 counts here.
+
+The practical consequence is that our contribution is not a better mutable-default detector. It is a reproducible pipeline from ``popular Python AI/ML projects'' to ``a comparable per-rule defect table,'' plus the evidence in Section~\ref{sec:validation} that the findings it surfaces are ones maintainers act on.
+
 \begin{lstlisting}[caption={Scanning a repository for two rule classes.}]
 $ PYTHONPATH=codehound/src python3 -m codehound.cli \
       scan /path/to/repo --select CH001,CH006
@@ -102,7 +107,23 @@ CH005 & unclosed file handle        &  10 &  0.7\% \\
 \end{tabular}
 \end{table}
 
-We identified 1{,}377 defect instances in 24 of the 28 projects. The distribution is heavily skewed: CH002 alone accounts for over half of all findings, while CH001---the class with the most direct production impact, since one blocking call stalls every concurrent request---is comparatively rare at 22 instances. That asymmetry is itself a useful signal for practitioners: the most common defect is not the most costly one.
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig1_defects_by_class.png}
+\caption{Defect instances by rule across the 28-project corpus.}
+\label{fig:byclass}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig2_top_frameworks.png}
+\caption{The twelve most affected projects, by total defect instances.}
+\label{fig:topframeworks}
+\end{figure}
+
+We identified 1{,}377 defect instances in 24 of the 28 projects. The distribution is heavily skewed (Fig.~\ref{fig:byclass}): CH002 alone accounts for over half of all findings, while CH001---the class with the most direct production impact, since one blocking call stalls every concurrent request---is comparatively rare at 22 instances. That asymmetry is itself a useful signal for practitioners: the most common defect is not the most costly one.
+
+Findings are also concentrated by project (Fig.~\ref{fig:topframeworks}). A single project accounts for 536 of the 1{,}377 instances, and the four most affected account for roughly two thirds. Concentration of this kind is expected---it tracks codebase size and how heavily a project leans on \texttt{asyncio}---but it means aggregate counts should not be read as a per-project quality ranking. Both figures are regenerated directly from the released CSV by \texttt{make\_figures.py}.
 
 One repository was excluded from the analysis set and the reasoning recorded in \texttt{EXCLUSIONS.md}. At its pinned commit it tracked no Python source, delegating all implementation to four submodules; it had been recorded with zero findings, which is a non-observation rather than a clean result, and retaining it would have inflated the denominator of every prevalence figure.
 
