@@ -12,6 +12,14 @@ authors:
     given-names: Abhinav
     orcid: "https://orcid.org/0009-0005-1542-0221"
 repository-code: "https://github.com/kratos0718/codehound"
+doi: "10.5281/zenodo.21851079"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.21851079"
+    description: Concept DOI resolving to the latest release
+  - type: doi
+    value: "10.5281/zenodo.21851080"
+    description: Version DOI for release v1.0.1
 abstract: >-
   codehound is a zero-dependency static analyzer built on
   Python's standard-library ast module. It detects six
@@ -33,4 +41,4 @@ keywords:
   - mining software repositories
   - empirical software engineering
 license: MIT
-version: 1.0.0
+version: 1.0.1
