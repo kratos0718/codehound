@@ -1,0 +1,9 @@
+rule,defect_class,repo,stars,pr_number,pr_url,merged_date
+CH001,event-loop-blocking call in async function,unslothai/unsloth,69707,6135,https://github.com/unslothai/unsloth/pull/6135,2026-06-11
+CH001,event-loop-blocking call in async function,agno-agi/agno,41627,8158,https://github.com/agno-agi/agno/pull/8158,2026-05-30
+CH001,event-loop-blocking call in async function,agno-agi/agno,41627,8186,https://github.com/agno-agi/agno/pull/8186,2026-06-01
+CH001,event-loop-blocking call in async function,xorbitsai/inference,9484,5055,https://github.com/xorbitsai/inference/pull/5055,2026-06-20
+CH001,event-loop-blocking call in async function,weaviate/weaviate-python-client,226,2104,https://github.com/weaviate/weaviate-python-client/pull/2104,2026-07-27
+CH002,mutable default argument,mem0ai/mem0,62808,5302,https://github.com/mem0ai/mem0/pull/5302,2026-06-04
+CH002,mutable default argument,pydantic/pydantic-ai,19143,6189,https://github.com/pydantic/pydantic-ai/pull/6189,2026-07-02
+CH005,unclosed file handle,agno-agi/agno,41627,8161,https://github.com/agno-agi/agno/pull/8161,2026-06-01
