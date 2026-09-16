@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "codehound"
-version = "0.1.0"
+dynamic = ["version"]
 description = "An AST-based static analyzer that hunts real correctness and async-safety bugs in Python code."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -29,6 +29,9 @@ codehound = "codehound.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+
+[tool.hatch.version]
+path = "src/codehound/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/codehound"]
