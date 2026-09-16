@@ -1,4 +1,8 @@
-# 🐕 codehound
+<p align="center">
+  <img src="assets/logo.png" alt="codehound" width="220">
+</p>
+
+<h1 align="center">codehound</h1>
 
 **An AST-based static analyzer that hunts *real* bugs in large Python codebases — six of the seven rules are backed by a bug that was actually found and merged into a major open-source AI framework; the seventh is a hardening rule verified against real false positives instead.**
 
