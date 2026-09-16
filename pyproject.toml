@@ -33,5 +33,14 @@ dev = ["pytest>=7"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/codehound"]
 
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
