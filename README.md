@@ -1,6 +1,6 @@
 # 🐕 codehound
 
-**An AST-based static analyzer that hunts *real* bugs in large Python codebases — every rule is backed by a bug that was actually found and merged into a major open-source AI framework.**
+**An AST-based static analyzer that hunts *real* bugs in large Python codebases — six of the seven rules are backed by a bug that was actually found and merged into a major open-source AI framework; the seventh is a hardening rule verified against real false positives instead.**
 
 [![CI](https://github.com/kratos0718/codehound/actions/workflows/ci.yml/badge.svg)](https://github.com/kratos0718/codehound/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/codehound.svg)](https://pypi.org/project/codehound/)
@@ -96,8 +96,25 @@ codehound list
 | **CH004** | `deprecated-get-event-loop` | `asyncio.get_event_loop()` outside a running loop — deprecated since 3.10. | crewAI structured-tool / Snowflake search tool |
 | **CH005** | `unclosed-file-handle` | `f = open(...)` with no `with` and no matching `.close()` — leaks descriptors until `RLIMIT_NOFILE` is exhausted. | agno `OpenAITools.transcribe_audio` |
 | **CH006** | `floating-task` | `asyncio.create_task(...)` whose result is discarded — the loop keeps only a *weak* reference, so the task can be GC'd before it finishes. (Ruff RUF006) | hardening rule — the most under-caught async bug |
+| **CH007** | `unawaited-coroutine-call` | `foo()` where `foo` is `async def`, called as a bare statement — no `await`, no scheduling. The coroutine object is created and dropped; the body **never runs at all**. | hardening rule — see below |
 
 `codehound list` prints this from the source of truth.
+
+CH007 doesn't have a found-and-merged bug behind it like the other six -
+it targets a well-known Python correctness gotcha (the
+`RuntimeWarning: coroutine 'foo' was never awaited` you get when a
+coroutine is created and discarded) rather than one this project
+personally tracked down. What it does have is two real false positives
+caught and fixed while building it, both against agno: a bare `self.foo()`
+call matched against an unrelated same-named `async def foo` on a
+*different* class (agno's own sync/async "twin method" convention, e.g.
+`ZepTools`/`ZepAsyncTools`), and a plain callable parameter shadowed by an
+unrelated same-named async function hundreds of lines away in the same
+file. Scanning ~20 major Python AI/ML frameworks after fixing both turned
+up zero real instances - itself a result, not a null: it suggests either
+that mature async test suites catch this before merge, or that most real
+cases are cross-module calls, which this check deliberately doesn't chase
+(same-file name matching only, consistent with every other rule here).
 
 ---
 
@@ -115,12 +132,13 @@ codehound/
     ├── datetime_utcnow.py    (CH003)
     ├── get_event_loop.py     (CH004)
     ├── resource_leak.py      (CH005)
-    └── floating_task.py      (CH006)
+    ├── floating_task.py      (CH006)
+    └── unawaited_coroutine.py (CH007)
 ```
 
 Each check receives a parsed `ast` tree plus the precomputed parent map and returns `Finding`s. Adding a rule is one file + one registry line + a test. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a full walkthrough of the engine, the parent map, and the design decisions.
 
-**False-positive discipline is a feature.** CH005 won't flag a handle that's `return`ed (the caller owns it) or explicitly `.close()`d. CH006 won't flag `TaskGroup.create_task` (the group holds the reference). CH001 only fires when the *enclosing* function is `async`. The test suite asserts both "bad code is flagged" and "correct code is not."
+**False-positive discipline is a feature.** CH005 won't flag a handle that's `return`ed (the caller owns it) or explicitly `.close()`d. CH006 won't flag `TaskGroup.create_task` (the group holds the reference). CH001 only fires when the *enclosing* function is `async`. CH007 scopes `self.foo()` matches to async methods on the *same* class as the call site, and bare `foo()` matches to module-level async functions that aren't shadowed by a same-named parameter - both guards exist because of real false positives caught while building it (see above). The test suite asserts both "bad code is flagged" and "correct code is not."
 
 ---
 
@@ -137,10 +155,12 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
 
 ## Roadmap
 
-- [ ] `await` on a non-awaited coroutine (missing-await detection)
+- [x] `await` on a non-awaited coroutine (missing-await detection) — CH007
+- [x] PyPI release — `pip install codehound`
+- [ ] Cross-module resolution for CH007 (currently same-file only)
 - [ ] Sync HTTP clients constructed inside async request handlers
 - [ ] `--fix` for the mechanical rules (CH002, CH003, CH004)
-- [ ] Pre-commit hook + PyPI release
+- [ ] Pre-commit hook
 
 ---
 

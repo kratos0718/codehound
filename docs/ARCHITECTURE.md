@@ -40,7 +40,8 @@ src/codehound/
 │   ├── datetime_utcnow.py    CH003
 │   ├── get_event_loop.py     CH004
 │   ├── resource_leak.py      CH005
-│   └── floating_task.py      CH006
+│   ├── floating_task.py      CH006
+│   └── unawaited_coroutine.py CH007
 └── __init__.py      # public API surface + __version__
 ```
 
@@ -100,7 +101,7 @@ Three shared predicates are built on top of it:
 3. `scan_path` aggregates and sorts findings by `(path, line, col, code)` so
    output is deterministic — important for diffing in CI.
 
-## The six checks
+## The seven checks
 
 | Code | Detects | Key structural test |
 |------|---------|--------------------|
@@ -110,6 +111,7 @@ Three shared predicates are built on top of it:
 | CH004 | `asyncio.get_event_loop()` | attribute `get_event_loop` on a `Name` `asyncio` |
 | CH005 | `f = open(...)` never closed | assignment from `open()`, not inside a `with`, no matching `.close()` in the function, not `return`ed |
 | CH006 | discarded `create_task()` / `ensure_future()` | a bare `Expr` statement wrapping the call (result not bound/awaited/returned) |
+| CH007 | `async def` called without `await`/scheduling | bare `Expr` wrapping a `Call` whose target resolves to a same-file `async def` - module-level for bare names, same-class for `self./cls.` |
 
 Each lives in its own file with a module docstring explaining the bug and a
 real-world example of where it was found.
@@ -126,6 +128,13 @@ suppressions exist specifically to avoid noise:
   it) or explicitly `.close()`d anywhere in the function.
 - **CH006** does not flag `TaskGroup.create_task(...)` — the group holds the
   reference — only `asyncio`/loop receivers whose result is discarded.
+- **CH007** resolves `self.foo()`/`cls.foo()` against the async methods of
+  the *same enclosing class only* — a same-named `async def foo` on a
+  different class (a sync/async "twin method" pair, real in agno's
+  `ZepTools`/`ZepAsyncTools`) is not a match. Bare `foo()` is checked
+  against the enclosing function's own parameters first — a parameter
+  shadows a same-named module-level `async def` elsewhere in the file
+  (also a real false positive found while building this).
 
 The test suite asserts **both directions** for every rule: the bad pattern *is*
 flagged, and the idiomatic fix is *not*.

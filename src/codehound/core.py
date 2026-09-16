@@ -110,6 +110,25 @@ def enclosing_function(node: ast.AST, parents: dict):
     return None
 
 
+def enclosing_class(node: ast.AST, parents: dict) -> ast.ClassDef | None:
+    """Return the nearest enclosing ClassDef, or None.
+
+    Stops at the first FunctionDef/AsyncFunctionDef boundary that isn't
+    itself inside the class body being searched for - i.e. this walks up
+    through nested functions too, so a method's inner helper still resolves
+    to the class it's defined in.
+    """
+    cur = node
+    while cur is not None:
+        p = parents.get(id(cur))
+        if p is None:
+            return None
+        if isinstance(p, ast.ClassDef):
+            return p
+        cur = p
+    return None
+
+
 def is_awaited(node: ast.AST, parents: dict) -> bool:
     """True if the call ``node`` is the direct operand of an ``await``.
 

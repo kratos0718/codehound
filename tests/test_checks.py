@@ -170,3 +170,113 @@ def test_ch006_ignores_taskgroup_create_task():
         "    tg.create_task(coro)\n"
     )
     assert _run(code, ["CH006"]) == []
+
+
+# --- CH007 unawaited-coroutine-call ------------------------------------------------
+
+
+def test_ch007_flags_bare_call_to_async_function():
+    code = (
+        "async def fetch():\n"
+        "    ...\n"
+        "async def f():\n"
+        "    fetch()\n"
+    )
+    findings = _run(code, ["CH007"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH007"
+
+
+def test_ch007_ignores_awaited_call():
+    code = (
+        "async def fetch():\n"
+        "    ...\n"
+        "async def f():\n"
+        "    await fetch()\n"
+    )
+    assert _run(code, ["CH007"]) == []
+
+
+def test_ch007_ignores_call_wrapped_in_create_task():
+    code = (
+        "import asyncio\n"
+        "async def fetch():\n"
+        "    ...\n"
+        "async def f():\n"
+        "    asyncio.create_task(fetch())\n"
+    )
+    assert _run(code, ["CH007"]) == []
+
+
+def test_ch007_ignores_assigned_result():
+    code = (
+        "async def fetch():\n"
+        "    ...\n"
+        "async def f():\n"
+        "    coro = fetch()\n"
+        "    await coro\n"
+    )
+    assert _run(code, ["CH007"]) == []
+
+
+def test_ch007_ignores_call_to_sync_function():
+    code = (
+        "def fetch():\n"
+        "    ...\n"
+        "async def f():\n"
+        "    fetch()\n"
+    )
+    assert _run(code, ["CH007"]) == []
+
+
+def test_ch007_flags_bare_call_to_async_method_via_self():
+    code = (
+        "class C:\n"
+        "    async def fetch(self):\n"
+        "        ...\n"
+        "    async def f(self):\n"
+        "        self.fetch()\n"
+    )
+    findings = _run(code, ["CH007"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH007"
+
+
+def test_ch007_ignores_returned_coroutine():
+    code = (
+        "async def fetch():\n"
+        "    ...\n"
+        "def f():\n"
+        "    return fetch()\n"
+    )
+    assert _run(code, ["CH007"]) == []
+
+
+def test_ch007_ignores_sync_twin_method_on_different_class():
+    # Real false positive found in agno: ZepTools.initialize is sync,
+    # ZepAsyncTools.initialize (a different class) is async - calling
+    # self.initialize() from ZepTools must not match the unrelated twin.
+    code = (
+        "class ZepTools:\n"
+        "    def __init__(self):\n"
+        "        self.initialize()\n"
+        "    def initialize(self):\n"
+        "        ...\n"
+        "class ZepAsyncTools:\n"
+        "    async def initialize(self):\n"
+        "        ...\n"
+    )
+    assert _run(code, ["CH007"]) == []
+
+
+def test_ch007_ignores_name_shadowed_by_parameter():
+    # Real false positive found in agno: an unrelated `async def write`
+    # exists elsewhere in the file, but `write` here is a plain callable
+    # parameter, not a reference to that function.
+    code = (
+        "def run_with_retry(write):\n"
+        "    write()\n"
+        "async def write():\n"
+        "    ...\n"
+    )
+    assert _run(code, ["CH007"]) == []

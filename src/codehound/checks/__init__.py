@@ -8,6 +8,7 @@ from codehound.checks.floating_task import FloatingTask
 from codehound.checks.get_event_loop import DeprecatedGetEventLoop
 from codehound.checks.mutable_defaults import MutableDefaultArgument
 from codehound.checks.resource_leak import UnclosedFileHandle
+from codehound.checks.unawaited_coroutine import UnawaitedCoroutineCall
 from codehound.core import Check
 
 ALL_CHECKS: list[type[Check]] = [
@@ -17,6 +18,7 @@ ALL_CHECKS: list[type[Check]] = [
     DeprecatedGetEventLoop,
     UnclosedFileHandle,
     FloatingTask,
+    UnawaitedCoroutineCall,
 ]
 
 
