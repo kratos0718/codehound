@@ -3,6 +3,7 @@
 **An AST-based static analyzer that hunts *real* bugs in large Python codebases — every rule is backed by a bug that was actually found and merged into a major open-source AI framework.**
 
 [![CI](https://github.com/kratos0718/codehound/actions/workflows/ci.yml/badge.svg)](https://github.com/kratos0718/codehound/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/codehound.svg)](https://pypi.org/project/codehound/)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21851079.svg)](https://doi.org/10.5281/zenodo.21851079)
@@ -43,12 +44,22 @@ I was contributing bug fixes to large AI frameworks and noticed the same handful
 ## Install
 
 ```bash
-# from a clone (modern pip)
+pip install codehound
+```
+
+Zero dependencies — it's ~750 lines on top of the standard-library `ast` module, so this installs instantly and runs fully offline, no API key or network call involved.
+
+<details>
+<summary>From a clone instead (for development)</summary>
+
+```bash
 pip install -e .
 
 # or run straight from source, no install needed
 PYTHONPATH=src python -m codehound.cli scan path/to/project
 ```
+
+</details>
 
 ## Usage
 
