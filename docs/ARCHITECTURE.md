@@ -130,7 +130,7 @@ Three shared predicates are built on top of it:
 | CH008 | `asyncio.run()` called from a running loop | `Call` to `asyncio.run` whose *immediate* enclosing function is an `AsyncFunctionDef` |
 | CH009 | non-daemon `threading.Thread` started, never joined | assignment/chained call to `threading.Thread(...)`, `.start()` seen, no `.join()`, no `daemon=True`, not returned/stored as any object's attribute |
 | CH010 | lambda in a loop captures the loop variable by reference | `Lambda` referencing a `for`-loop's target name, *directly stored* (appended/assigned/returned) rather than passed as a callback argument that's consumed immediately |
-| CH011 | `@lru_cache`/`@cache` on an instance method | decorator resolves to `lru_cache`/`cache`, enclosing scope is a `ClassDef`, not `staticmethod`/`classmethod` |
+| CH011 | `@lru_cache`/`@cache` on an instance method | decorator resolves to `lru_cache`/`cache`, enclosing scope is a `ClassDef`, not `staticmethod`/`classmethod`, class isn't a frozen dataclass/pydantic model |
 | CH012 | non-daemon `multiprocessing.Process` started, never joined | same shape as CH009, for `multiprocessing.Process(...)` |
 | CH013 | discarded `Executor.submit(...)` result | bare `Expr` wrapping `.submit(...)` on a name tracked back to a `ThreadPoolExecutor`/`ProcessPoolExecutor` construction |
 | CH014 | `lock.acquire()` outside a `with`, `.release()` not in `finally:` | matching `.release()` call on the same name exists in the function, but no enclosing `Try.finalbody` contains it |
@@ -175,6 +175,15 @@ suppressions exist specifically to avoid noise:
   loop (real, in marimo) looks identical at the AST level to the buggy
   pattern, but `sorted()` consumes the lambda synchronously within the
   same iteration, so nothing ever observes a stale value.
+- **CH011** skips a frozen `@dataclass` or a pydantic model with
+  `model_config = ConfigDict(frozen=True)` (or the old-style `class
+  Config: frozen = True`) — a frozen class hashes and compares by field
+  value, not identity, so `lru_cache` on its method memoizes by value
+  (bounded by `maxsize` distinct values) instead of leaking every
+  instance. Verified directly, not just reasoned about: dspy's `Image`
+  caches `format()` this way, and a second, field-equal instance's call
+  is served from the first instance's cache entry without ever being
+  inserted itself.
 - **CH016** treats a socket name as escaped if it's `return`ed as part of
   a tuple/list (not just as the bare name) or passed as an argument to
   any call, not just handed a `.close()` — vllm's rendezvous code returns

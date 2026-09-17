@@ -517,6 +517,92 @@ def test_ch011_ignores_uncached_instance_method():
     assert _run(code, ["CH011"]) == []
 
 
+def test_ch011_ignores_frozen_dataclass():
+    # A frozen dataclass is hashable and equal by field value, not identity -
+    # verified empirically: two separately constructed instances with the
+    # same field values hash equal, and lru_cache serves the second one
+    # straight from the first's cache entry without ever storing it. Bounded
+    # by maxsize the same way an equivalent free function cached by value
+    # would be - not a leak.
+    code = (
+        "from dataclasses import dataclass\n"
+        "from functools import lru_cache\n"
+        "@dataclass(frozen=True)\n"
+        "class Point:\n"
+        "    x: int\n"
+        "    @lru_cache\n"
+        "    def scaled(self, factor):\n"
+        "        return self.x * factor\n"
+    )
+    assert _run(code, ["CH011"]) == []
+
+
+def test_ch011_ignores_frozen_pydantic_model():
+    # Real false positive found in dspy: Image (model_config =
+    # ConfigDict(frozen=True)) caches format() with @lru_cache(maxsize=32) -
+    # confirmed via a REPL check that this is value-based memoization, not a
+    # per-instance leak.
+    code = (
+        "import pydantic\n"
+        "from functools import lru_cache\n"
+        "class Image(pydantic.BaseModel):\n"
+        "    url: str\n"
+        "    model_config = pydantic.ConfigDict(frozen=True)\n"
+        "    @lru_cache(maxsize=32)\n"
+        "    def format(self):\n"
+        "        return self.url.upper()\n"
+    )
+    assert _run(code, ["CH011"]) == []
+
+
+def test_ch011_ignores_frozen_pydantic_model_v1_style_config():
+    code = (
+        "import pydantic\n"
+        "from functools import lru_cache\n"
+        "class Image(pydantic.BaseModel):\n"
+        "    url: str\n"
+        "    class Config:\n"
+        "        frozen = True\n"
+        "    @lru_cache\n"
+        "    def format(self):\n"
+        "        return self.url.upper()\n"
+    )
+    assert _run(code, ["CH011"]) == []
+
+
+def test_ch011_still_flags_mutable_dataclass():
+    # Guard against the frozen-class check over-suppressing: a plain (not
+    # frozen) dataclass is not hashable by value, so this must still flag.
+    code = (
+        "from dataclasses import dataclass\n"
+        "from functools import lru_cache\n"
+        "@dataclass\n"
+        "class Point:\n"
+        "    x: int\n"
+        "    @lru_cache\n"
+        "    def scaled(self, factor):\n"
+        "        return self.x * factor\n"
+    )
+    findings = _run(code, ["CH011"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH011"
+
+
+def test_ch011_still_flags_pydantic_model_without_frozen_config():
+    code = (
+        "import pydantic\n"
+        "from functools import lru_cache\n"
+        "class Image(pydantic.BaseModel):\n"
+        "    url: str\n"
+        "    @lru_cache\n"
+        "    def format(self):\n"
+        "        return self.url.upper()\n"
+    )
+    findings = _run(code, ["CH011"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH011"
+
+
 # --- CH012 floating-process ----------------------------------------------------------
 
 

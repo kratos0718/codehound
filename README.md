@@ -112,7 +112,7 @@ Uploads findings to the repo's **Security → Code Scanning** tab via SARIF, in 
 ```yaml
 repos:
   - repo: https://github.com/kratos0718/codehound
-    rev: v1.4.1
+    rev: v1.4.2
     hooks:
       - id: codehound
 ```
@@ -204,6 +204,16 @@ cache from a class-level decorator to a per-instance one built in
 have a regression test verified to fail pre-fix and pass post-fix.
 PRs: [optuna/optuna#6859](https://github.com/optuna/optuna/pull/6859),
 [run-llama/llama_index#23089](https://github.com/run-llama/llama_index/pull/23089).
+
+**A third CH011 shape needed a guard instead of a PR:** dspy's `Image` (a
+pydantic model) caches `format()` the same way, but `Image` is frozen
+(`model_config = ConfigDict(frozen=True)`), which makes it hashable and
+equal *by field value*, not identity. Checked directly rather than
+assumed: two separately constructed instances with equal fields hash
+equal, and the second one's call is served from the first's cache entry
+without ever being inserted itself — bounded, value-based memoization,
+not a leak. CH011 now recognizes a frozen `@dataclass` or a frozen
+pydantic model and skips it.
 
 **CH016 found and fixed its own false positive the day it shipped.** The
 first real-corpus scan of `unclosed-socket` turned up three hits in

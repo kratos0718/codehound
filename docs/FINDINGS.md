@@ -157,6 +157,25 @@ the false positives a naive grep would have reported:
   (skip a singleton-shaped class, skip a line already carrying a
   suppressing `noqa`) would need to account for, without changing today's
   shipped behavior speculatively.
+- **CH011 (dspy), a third shape that DID get a guard** — dspy's `Image`
+  (a pydantic model representing an image) caches `format()` with
+  `@lru_cache(maxsize=32)`. Unlike the leak cases above, `Image` sets
+  `model_config = ConfigDict(frozen=True)`, and a frozen pydantic model is
+  hashable and equal *by its field values*, not by identity. Checked
+  directly rather than assumed: constructing two separate `Image`-like
+  instances with the same field value and calling the cached method on
+  both, only the *first* call actually runs the method body - the second
+  is served from the first instance's cache entry without the second
+  instance ever being inserted as a key. The cache is bounded by
+  `maxsize` distinct field-value combinations, exactly like caching a
+  pure function by value would be - not a per-instance leak. Unlike the
+  mlflow/marimo shapes above, this one *is* staticly detectable (a frozen
+  stdlib `@dataclass` or a pydantic `model_config=ConfigDict(frozen=True)`
+  / `class Config: frozen = True`), so CH011 now skips it. Verified
+  against the real dspy file (no longer flagged) and a full corpus
+  rescan (only dspy's hit disappeared; the other 8 corpus repos' CH011
+  hits are unaffected, confirming the guard doesn't over-suppress mutable
+  classes).
 - **CH016 (vllm), found and fixed the day it shipped** — the very first
   real-corpus scan of the brand new `unclosed-socket` check turned up
   three hits in vllm's distributed process-group rendezvous code, and all
