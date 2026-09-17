@@ -1,0 +1,84 @@
+name: "codehound"
+description: "AST-based static analyzer for async-safety, resource-leak, and correctness bugs in Python."
+author: "kratos0718"
+branding:
+  icon: "search"
+  color: "green"
+
+inputs:
+  path:
+    description: "File or directory to scan"
+    required: false
+    default: "."
+  select:
+    description: "Comma-separated check codes to run, e.g. CH001,CH006 (default: all)"
+    required: false
+    default: ""
+  fail-on-findings:
+    description: "Fail the workflow step if any findings are reported"
+    required: false
+    default: "true"
+  upload-sarif:
+    description: "Upload results to the GitHub Code Scanning (Security) tab"
+    required: false
+    default: "true"
+  codehound-version:
+    description: "Pin a specific codehound version (default: latest from PyPI)"
+    required: false
+    default: ""
+
+outputs:
+  finding-count:
+    description: "Total number of findings reported"
+    value: ${{ steps.scan.outputs.finding-count }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install codehound
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.codehound-version }}" ]; then
+          pip install "codehound==${{ inputs.codehound-version }}"
+        else
+          pip install codehound
+        fi
+
+    - name: Run codehound (SARIF)
+      if: inputs.upload-sarif == 'true'
+      shell: bash
+      run: |
+        select_arg=()
+        if [ -n "${{ inputs.select }}" ]; then
+          select_arg=(--select "${{ inputs.select }}")
+        fi
+        codehound scan "${{ inputs.path }}" "${select_arg[@]}" --format sarif --exit-zero > codehound-results.sarif
+
+    - name: Upload SARIF to GitHub Code Scanning
+      if: inputs.upload-sarif == 'true'
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: codehound-results.sarif
+
+    - name: Run codehound
+      id: scan
+      shell: bash
+      run: |
+        select_arg=()
+        if [ -n "${{ inputs.select }}" ]; then
+          select_arg=(--select "${{ inputs.select }}")
+        fi
+        set +e
+        output=$(codehound scan "${{ inputs.path }}" "${select_arg[@]}" --exit-zero 2>&1)
+        count=$(echo "$output" | grep -oE "Found [0-9]+ issue" | grep -oE "[0-9]+" || echo 0)
+        echo "$output"
+        echo "finding-count=$count" >> "$GITHUB_OUTPUT"
+        set -e
+        if [ "${{ inputs.fail-on-findings }}" == "true" ] && [ "$count" -gt 0 ]; then
+          exit 1
+        fi

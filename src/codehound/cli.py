@@ -9,6 +9,8 @@ import sys
 from codehound import __version__
 from codehound.checks import ALL_CHECKS, get_checks
 from codehound.core import DEFAULT_SKIP_DIRS, scan_path
+from codehound.sarif import to_sarif
+from codehound.terminal import format_findings_text, format_summary
 
 
 def _cmd_scan(args: argparse.Namespace) -> int:
@@ -21,7 +23,10 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     skip = set(DEFAULT_SKIP_DIRS)
     if args.include_tests:
         skip -= {"tests", "test", "testing"}
-    findings = scan_path(args.path, checks, skip_dirs=frozenset(skip))
+    findings = []
+    for path in args.paths:
+        findings.extend(scan_path(path, checks, skip_dirs=frozenset(skip)))
+    findings.sort(key=lambda f: (f.path, f.line, f.col, f.code))
 
     if args.format == "json":
         print(json.dumps([f.as_dict() for f in findings], indent=2))
@@ -30,18 +35,12 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         for f in findings:
             msg = f.message.replace('"', "'")
             print(f'{f.path},{f.line},{f.col},{f.code},"{msg}"')
+    elif args.format == "sarif":
+        print(json.dumps(to_sarif(findings, ALL_CHECKS), indent=2))
     else:  # text
-        for f in findings:
-            print(f.as_text())
-        counts: dict[str, int] = {}
-        for f in findings:
-            counts[f.code] = counts.get(f.code, 0) + 1
-        summary = ", ".join(f"{k}: {v}" for k, v in sorted(counts.items()))
-        print(
-            f"\nFound {len(findings)} issue(s)"
-            + (f" ({summary})" if summary else ""),
-            file=sys.stderr,
-        )
+        for line in format_findings_text(findings):
+            print(line)
+        print(f"\n{format_summary(findings)}", file=sys.stderr)
 
     if findings and not args.exit_zero:
         return 1
@@ -62,17 +61,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"codehound {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    scan = sub.add_parser("scan", help="scan a file or directory for issues")
-    scan.add_argument("path", help="file or directory to scan")
+    scan = sub.add_parser("scan", help="scan one or more files/directories for issues")
+    scan.add_argument(
+        "paths",
+        nargs="+",
+        metavar="path",
+        help="file(s) or director(y/ies) to scan (accepts multiple, for pre-commit)",
+    )
     scan.add_argument(
         "--select",
         help="comma-separated check codes/names to run (default: all), e.g. CH001,CH006",
     )
     scan.add_argument(
         "--format",
-        choices=["text", "json", "csv"],
+        choices=["text", "json", "csv", "sarif"],
         default="text",
-        help="output format (default: text)",
+        help="output format (default: text; sarif for GitHub Code Scanning)",
     )
     scan.add_argument(
         "--include-tests",

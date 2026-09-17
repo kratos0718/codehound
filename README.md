@@ -71,12 +71,18 @@ PYTHONPATH=src python -m codehound.cli scan path/to/project
 # scan a project (skips tests/, docs/, examples/, vendored code by default)
 codehound scan path/to/project
 
+# scan multiple files/directories in one invocation (what pre-commit does)
+codehound scan file1.py file2.py src/
+
 # only run specific checks
 codehound scan path/to/project --select CH001,CH006
 
 # machine-readable output for CI dashboards
 codehound scan path/to/project --format json
 codehound scan path/to/project --format csv
+
+# GitHub Code Scanning (Security tab) can ingest this directly
+codehound scan path/to/project --format sarif > results.sarif
 
 # list every available check
 codehound list
@@ -86,6 +92,29 @@ codehound list
 
 ```yaml
 - run: codehound scan src   # fails the build on a regression
+```
+
+### GitHub Action
+
+```yaml
+- uses: kratos0718/codehound@v1.2.0
+  with:
+    path: src
+    # select: CH001,CH006        # optional, defaults to all checks
+    # fail-on-findings: "false"  # optional, report without failing the build
+    # upload-sarif: "false"      # optional, skip the Code Scanning upload
+```
+
+Uploads findings to the repo's **Security → Code Scanning** tab via SARIF, in addition to failing the step (unless `fail-on-findings: "false"`).
+
+### pre-commit
+
+```yaml
+repos:
+  - repo: https://github.com/kratos0718/codehound
+    rev: v1.2.0
+    hooks:
+      - id: codehound
 ```
 
 ---
@@ -169,7 +198,9 @@ codehound/
 ├── core.py          # file discovery, AST parsing, the Finding/Check contract,
 │                    #   and a child→parent map so checks can ask "what's my
 │                    #   enclosing function / am I inside a `with`?"
-├── cli.py           # `scan` / `list`, text|json|csv output, CI-friendly exit codes
+├── cli.py           # `scan` / `list`, text|json|csv|sarif output, CI-friendly exit codes
+├── sarif.py         # SARIF 2.1.0 output for GitHub Code Scanning
+├── terminal.py      # colored text output (auto-disabled for non-TTY / NO_COLOR)
 └── checks/          # one small, independently-tested class per rule
     ├── blocking_async.py     (CH001)
     ├── mutable_defaults.py   (CH002)
@@ -207,10 +238,14 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
 - [x] `asyncio.run()` inside a running loop — CH008
 - [x] Non-daemon thread started without a join — CH009 (the thread analog of CH006)
 - [x] Loop-variable closure capture in lambdas — CH010
+- [x] Pre-commit hook — `.pre-commit-hooks.yaml`
+- [x] GitHub Action — `action.yml`, uploads SARIF to Code Scanning
+- [x] SARIF output — `--format sarif`
+- [x] Colored terminal output (auto-disabled for non-TTY / `NO_COLOR`)
+- [x] Multi-path `scan` invocation (what the pre-commit hook needs)
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Sync HTTP clients constructed inside async request handlers
 - [ ] `--fix` for the mechanical rules (CH002, CH003, CH004)
-- [ ] Pre-commit hook
 
 ---
 

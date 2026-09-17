@@ -32,7 +32,9 @@ a style linter.
 src/codehound/
 ├── core.py          # engine: discovery, parsing, the Finding/Check contract,
 │                    #   parent map, and shared AST predicates
-├── cli.py           # `scan` / `list`, text|json|csv output, exit codes
+├── cli.py           # `scan` / `list`, text|json|csv|sarif output, exit codes
+├── sarif.py         # SARIF 2.1.0 serialization for GitHub Code Scanning
+├── terminal.py      # colored text output (TTY-aware, respects NO_COLOR)
 ├── checks/
 │   ├── __init__.py  # the check registry (ALL_CHECKS) + get_checks() selector
 │   ├── blocking_async.py     CH001
@@ -159,11 +161,27 @@ flagged, and the idiomatic fix is *not*.
 
 ## CLI and CI integration
 
-`codehound scan <path>` prints `path:line:col: CODE message`, supports
-`--select CH001,CH006`, `--format json|csv`, and `--include-tests`. It exits
-**non-zero when findings exist** (unless `--exit-zero`), so it drops into CI as a
-gate: `run: codehound scan src`. `codehound list` prints the rule catalog from
-the registry — the single source of truth.
+`codehound scan <path> [<path> ...]` prints `path:line:col: CODE message`
+(colored when stdout is a real terminal, plain otherwise), supports
+`--select CH001,CH006`, `--format json|csv|sarif`, and `--include-tests`. It
+accepts multiple paths in one invocation - not just for convenience, but
+because that's how `pre-commit` invokes a hook (one call, every changed file
+as a separate argument). It exits **non-zero when findings exist** (unless
+`--exit-zero`), so it drops into CI as a gate: `run: codehound scan src`.
+`codehound list` prints the rule catalog from the registry — the single
+source of truth.
+
+Three integration points ship at the repo root, each a thin wrapper around
+this same CLI - none of them duplicate its logic:
+- `action.yml` - a composite GitHub Action. Installs codehound, runs it
+  twice (once to produce `--format sarif` for the Code Scanning upload,
+  once for the human-readable exit-code-bearing run), so a workflow gets
+  both a Security-tab integration and a normal failing CI step from one
+  `uses:` line.
+- `.pre-commit-hooks.yaml` - `language: python`, `entry: codehound scan`,
+  `types: [python]`. pre-commit installs codehound into its own managed
+  venv and calls `codehound scan <changed files...>` - this is the reason
+  `scan` takes `nargs="+"` instead of a single path.
 
 ## Extending it
 

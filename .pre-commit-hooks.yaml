@@ -1,0 +1,7 @@
+- id: codehound
+  name: codehound
+  description: AST-based static analyzer for async-safety, resource-leak, and correctness bugs in Python.
+  entry: codehound scan
+  language: python
+  types: [python]
+  require_serial: true
