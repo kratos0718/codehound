@@ -14,7 +14,7 @@
 
 Most linters flag style. `codehound` flags the *subtle correctness and async-safety bugs* that slip past code review and only bite in production — event-loop stalls, shared mutable state, leaked file descriptors, fire-and-forget tasks that get garbage-collected mid-run.
 
-Each of the six checks below isn't theoretical. **I wrote it after finding — and fixing, via a merged pull request — that exact bug in a real, popular framework** (agno 25k⭐, crewAI 30k⭐, mem0, huggingface_hub).
+Most of the checks below aren't theoretical. **I wrote them after finding — and fixing, via a merged pull request — that exact bug in a real, popular framework** (agno 25k⭐, crewAI 30k⭐, mem0, llama_index, accelerate).
 
 ---
 
@@ -97,7 +97,7 @@ codehound list
 ### GitHub Action
 
 ```yaml
-- uses: kratos0718/codehound@v1.2.0
+- uses: kratos0718/codehound@v1
   with:
     path: src
     # select: CH001,CH006        # optional, defaults to all checks
@@ -112,7 +112,7 @@ Uploads findings to the repo's **Security → Code Scanning** tab via SARIF, in 
 ```yaml
 repos:
   - repo: https://github.com/kratos0718/codehound
-    rev: v1.2.0
+    rev: v1.3.0
     hooks:
       - id: codehound
 ```
