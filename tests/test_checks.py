@@ -467,3 +467,427 @@ def test_ch010_still_flags_lambda_appended_even_when_named_like_a_key_fn():
     findings = _run(code, ["CH010"])
     assert len(findings) == 1
 
+
+# --- CH011 lru-cache-on-method ------------------------------------------------------
+
+
+def test_ch011_flags_lru_cache_on_instance_method():
+    code = (
+        "from functools import lru_cache\n"
+        "class C:\n"
+        "    @lru_cache\n"
+        "    def compute(self, x):\n"
+        "        return x\n"
+    )
+    findings = _run(code, ["CH011"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH011"
+
+
+def test_ch011_flags_cache_decorator_call_form():
+    code = (
+        "import functools\n"
+        "class C:\n"
+        "    @functools.lru_cache(maxsize=128)\n"
+        "    def compute(self, x):\n"
+        "        return x\n"
+    )
+    assert len(_run(code, ["CH011"])) == 1
+
+
+def test_ch011_ignores_lru_cache_on_module_level_function():
+    code = "from functools import lru_cache\n@lru_cache\ndef compute(x):\n    return x\n"
+    assert _run(code, ["CH011"]) == []
+
+
+def test_ch011_ignores_lru_cache_on_staticmethod():
+    code = (
+        "from functools import lru_cache\n"
+        "class C:\n"
+        "    @staticmethod\n"
+        "    @lru_cache\n"
+        "    def compute(x):\n"
+        "        return x\n"
+    )
+    assert _run(code, ["CH011"]) == []
+
+
+def test_ch011_ignores_uncached_instance_method():
+    code = "class C:\n    def compute(self, x):\n        return x\n"
+    assert _run(code, ["CH011"]) == []
+
+
+# --- CH012 floating-process ----------------------------------------------------------
+
+
+def test_ch012_flags_chained_start_with_no_reference():
+    code = "import multiprocessing\ndef f():\n    multiprocessing.Process(target=work).start()\n"
+    findings = _run(code, ["CH012"])
+    assert len(findings) == 1
+
+
+def test_ch012_ignores_daemon_process():
+    code = "import multiprocessing\ndef f():\n    multiprocessing.Process(target=work, daemon=True).start()\n"
+    assert _run(code, ["CH012"]) == []
+
+
+def test_ch012_flags_assigned_process_never_joined():
+    code = (
+        "import multiprocessing\n"
+        "def f():\n"
+        "    p = multiprocessing.Process(target=work)\n"
+        "    p.start()\n"
+    )
+    findings = _run(code, ["CH012"])
+    assert len(findings) == 1
+
+
+def test_ch012_ignores_process_that_is_joined():
+    code = (
+        "import multiprocessing\n"
+        "def f():\n"
+        "    p = multiprocessing.Process(target=work)\n"
+        "    p.start()\n"
+        "    p.join()\n"
+    )
+    assert _run(code, ["CH012"]) == []
+
+
+def test_ch012_ignores_process_returned_to_caller():
+    code = (
+        "import multiprocessing\n"
+        "def f():\n"
+        "    p = multiprocessing.Process(target=work)\n"
+        "    p.start()\n"
+        "    return p\n"
+    )
+    assert _run(code, ["CH012"]) == []
+
+
+# --- CH013 discarded-future -----------------------------------------------------------
+
+
+def test_ch013_flags_bare_submit_call():
+    code = (
+        "from concurrent.futures import ThreadPoolExecutor\n"
+        "def f():\n"
+        "    executor = ThreadPoolExecutor()\n"
+        "    executor.submit(work)\n"
+    )
+    findings = _run(code, ["CH013"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH013"
+
+
+def test_ch013_flags_submit_inside_with_block():
+    code = (
+        "from concurrent.futures import ThreadPoolExecutor\n"
+        "def f():\n"
+        "    with ThreadPoolExecutor() as executor:\n"
+        "        executor.submit(work)\n"
+    )
+    assert len(_run(code, ["CH013"])) == 1
+
+
+def test_ch013_ignores_captured_future():
+    code = (
+        "from concurrent.futures import ThreadPoolExecutor\n"
+        "def f():\n"
+        "    executor = ThreadPoolExecutor()\n"
+        "    future = executor.submit(work)\n"
+        "    future.result()\n"
+    )
+    assert _run(code, ["CH013"]) == []
+
+
+def test_ch013_ignores_submit_on_untracked_object():
+    # `queue.submit(...)` where queue is some unrelated object with its own
+    # submit method - not a tracked ThreadPoolExecutor/ProcessPoolExecutor.
+    code = "def f():\n    queue.submit(work)\n"
+    assert _run(code, ["CH013"]) == []
+
+
+# --- CH014 unprotected-lock-acquire --------------------------------------------------
+
+
+def test_ch014_flags_unguarded_acquire_release_pair():
+    code = (
+        "import threading\n"
+        "lock = threading.Lock()\n"
+        "def f():\n"
+        "    lock.acquire()\n"
+        "    do_work()\n"
+        "    lock.release()\n"
+    )
+    findings = _run(code, ["CH014"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH014"
+
+
+def test_ch014_ignores_with_statement():
+    code = (
+        "import threading\n"
+        "lock = threading.Lock()\n"
+        "def f():\n"
+        "    with lock:\n"
+        "        do_work()\n"
+    )
+    assert _run(code, ["CH014"]) == []
+
+
+def test_ch014_ignores_release_guarded_by_finally():
+    code = (
+        "import threading\n"
+        "lock = threading.Lock()\n"
+        "def f():\n"
+        "    lock.acquire()\n"
+        "    try:\n"
+        "        do_work()\n"
+        "    finally:\n"
+        "        lock.release()\n"
+    )
+    assert _run(code, ["CH014"]) == []
+
+
+def test_ch014_ignores_acquire_with_no_release_at_all():
+    # Nothing to flag as "unprotected pairing" if there's no release to pair with
+    # (a different bug, out of scope for this check).
+    code = "import threading\nlock = threading.Lock()\ndef f():\n    lock.acquire()\n"
+    assert _run(code, ["CH014"]) == []
+
+
+# --- CH015 async-property -------------------------------------------------------------
+
+
+def test_ch015_flags_async_def_property():
+    code = "class C:\n    @property\n    async def value(self):\n        return 1\n"
+    findings = _run(code, ["CH015"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH015"
+
+
+def test_ch015_ignores_sync_property():
+    code = "class C:\n    @property\n    def value(self):\n        return 1\n"
+    assert _run(code, ["CH015"]) == []
+
+
+def test_ch015_ignores_plain_async_method():
+    code = "class C:\n    async def value(self):\n        return 1\n"
+    assert _run(code, ["CH015"]) == []
+
+
+# --- CH016 unclosed-socket ------------------------------------------------------------
+
+
+def test_ch016_flags_unclosed_socket():
+    code = (
+        "import socket\n"
+        "def f():\n"
+        "    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "    s.connect(('localhost', 80))\n"
+        "    return s.recv(1024)\n"
+    )
+    findings = _run(code, ["CH016"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH016"
+
+
+def test_ch016_ignores_with_socket():
+    code = (
+        "import socket\n"
+        "def f():\n"
+        "    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:\n"
+        "        return s.recv(1024)\n"
+    )
+    assert _run(code, ["CH016"]) == []
+
+
+def test_ch016_ignores_explicit_close():
+    code = (
+        "import socket\n"
+        "def f():\n"
+        "    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "    data = s.recv(1024)\n"
+        "    s.close()\n"
+        "    return data\n"
+    )
+    assert _run(code, ["CH016"]) == []
+
+
+def test_ch016_ignores_returned_socket():
+    code = (
+        "import socket\n"
+        "def connect():\n"
+        "    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "    return s\n"
+    )
+    assert _run(code, ["CH016"]) == []
+
+
+# --- CH017 collections-abc-import ----------------------------------------------------
+
+
+def test_ch017_flags_direct_import_from_collections():
+    code = "from collections import Mapping\n"
+    findings = _run(code, ["CH017"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH017"
+
+
+def test_ch017_flags_attribute_access():
+    code = "import collections\nx = collections.Mapping\n"
+    assert len(_run(code, ["CH017"])) == 1
+
+
+def test_ch017_ignores_correct_abc_import():
+    code = "from collections.abc import Mapping\n"
+    assert _run(code, ["CH017"]) == []
+
+
+def test_ch017_ignores_non_abc_collections_members():
+    code = "from collections import OrderedDict, defaultdict, deque, namedtuple, Counter\n"
+    assert _run(code, ["CH017"]) == []
+
+
+def test_ch017_ignores_qualified_collections_abc_attribute_access():
+    code = "import collections.abc\nx = collections.abc.Mapping\n"
+    assert _run(code, ["CH017"]) == []
+
+
+# --- CH018 removed-asyncio-task-methods ------------------------------------------------
+
+
+def test_ch018_flags_qualified_current_task():
+    code = "import asyncio\nt = asyncio.Task.current_task()\n"
+    findings = _run(code, ["CH018"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH018"
+
+
+def test_ch018_flags_all_tasks_when_task_imported_directly():
+    code = "from asyncio import Task\nt = Task.all_tasks()\n"
+    assert len(_run(code, ["CH018"])) == 1
+
+
+def test_ch018_ignores_module_level_replacement():
+    code = "import asyncio\nt = asyncio.current_task()\n"
+    assert _run(code, ["CH018"]) == []
+
+
+def test_ch018_ignores_unrelated_task_class_with_same_method_name():
+    # `Task` here is never imported from asyncio - a false positive risk
+    # this check specifically guards against (same lesson as CH007).
+    code = "class Task:\n    @classmethod\n    def current_task(cls):\n        return None\nTask.current_task()\n"
+    assert _run(code, ["CH018"]) == []
+
+
+# --- CH019 removed-getargspec ----------------------------------------------------------
+
+
+def test_ch019_flags_import():
+    code = "from inspect import getargspec\n"
+    findings = _run(code, ["CH019"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH019"
+
+
+def test_ch019_flags_qualified_call():
+    code = "import inspect\ninspect.getargspec(f)\n"
+    assert len(_run(code, ["CH019"])) == 1
+
+
+def test_ch019_ignores_signature():
+    code = "import inspect\ninspect.signature(f)\n"
+    assert _run(code, ["CH019"]) == []
+
+
+# --- CH020 bare-except ------------------------------------------------------------------
+
+
+def test_ch020_flags_bare_except():
+    code = "try:\n    risky()\nexcept:\n    pass\n"
+    findings = _run(code, ["CH020"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH020"
+
+
+def test_ch020_flags_except_base_exception():
+    code = "try:\n    risky()\nexcept BaseException:\n    pass\n"
+    assert len(_run(code, ["CH020"])) == 1
+
+
+def test_ch020_ignores_specific_exception():
+    code = "try:\n    risky()\nexcept ValueError:\n    pass\n"
+    assert _run(code, ["CH020"]) == []
+
+
+def test_ch020_ignores_except_exception():
+    # `except Exception:` is broad but does NOT catch KeyboardInterrupt/SystemExit
+    # (they inherit from BaseException, not Exception) - a real, meaningful
+    # distinction this check must not blur.
+    code = "try:\n    risky()\nexcept Exception:\n    pass\n"
+    assert _run(code, ["CH020"]) == []
+
+
+def test_ch020_ignores_base_exception_that_is_captured_and_used():
+    # Real false positive found in agno: a background-thread runner
+    # deliberately catches BaseException (including Ctrl-C/SystemExit)
+    # and reports it back to the consumer via a queue - not a silent
+    # swallow, since the exception is captured and used.
+    code = (
+        "def f():\n"
+        "    try:\n"
+        "        risky()\n"
+        "    except BaseException as e:\n"
+        "        thread_error.append(e)\n"
+    )
+    assert _run(code, ["CH020"]) == []
+
+
+def test_ch020_flags_base_exception_bound_but_unused():
+    code = (
+        "def f():\n"
+        "    try:\n"
+        "        risky()\n"
+        "    except BaseException as e:\n"
+        "        pass\n"
+    )
+    assert len(_run(code, ["CH020"])) == 1
+
+
+def test_ch020_ignores_base_exception_with_no_name_that_reraises():
+    # Real false positive found in agno: `except BaseException:` (no bound
+    # name) that resets internal state then bare-`raise`s - properly
+    # propagates the original error after cleanup, so nothing is swallowed.
+    code = (
+        "def f(self):\n"
+        "    try:\n"
+        "        risky()\n"
+        "    except BaseException:\n"
+        "        self._tools = None\n"
+        "        raise\n"
+    )
+    assert _run(code, ["CH020"]) == []
+
+
+def test_ch020_ignores_bare_except_that_reraises():
+    code = "try:\n    risky()\nexcept:\n    cleanup()\n    raise\n"
+    assert _run(code, ["CH020"]) == []
+
+
+def test_ch020_flags_base_exception_with_raise_only_in_nested_handler():
+    # The outer handler itself swallows - a `raise` inside a *nested*
+    # try/except's own handler shouldn't count as the outer handler
+    # re-raising anything.
+    code = (
+        "def f():\n"
+        "    try:\n"
+        "        risky()\n"
+        "    except BaseException:\n"
+        "        try:\n"
+        "            cleanup()\n"
+        "        except Exception:\n"
+        "            raise\n"
+    )
+    assert len(_run(code, ["CH020"])) == 1
+

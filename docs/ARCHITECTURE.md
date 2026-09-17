@@ -46,11 +46,21 @@ src/codehound/
 │   ├── unawaited_coroutine.py CH007
 │   ├── asyncio_run_in_loop.py CH008
 │   ├── floating_thread.py     CH009
-│   └── loop_closure_capture.py CH010
+│   ├── loop_closure_capture.py CH010
+│   ├── lru_cache_on_method.py  CH011
+│   ├── floating_process.py     CH012
+│   ├── discarded_future.py     CH013
+│   ├── unprotected_lock.py     CH014
+│   ├── async_property.py       CH015
+│   ├── unclosed_socket.py      CH016
+│   ├── collections_abc_import.py CH017
+│   ├── removed_asyncio_task_methods.py CH018
+│   ├── removed_getargspec.py   CH019
+│   └── bare_except.py          CH020
 └── __init__.py      # public API surface + __version__
 ```
 
-~750 lines of source, zero runtime dependencies (standard-library `ast` only).
+~2,200 lines of source, zero runtime dependencies (standard-library `ast` only).
 
 ## The core contract
 
@@ -106,7 +116,7 @@ Three shared predicates are built on top of it:
 3. `scan_path` aggregates and sorts findings by `(path, line, col, code)` so
    output is deterministic — important for diffing in CI.
 
-## The ten checks
+## The twenty checks
 
 | Code | Detects | Key structural test |
 |------|---------|--------------------|
@@ -120,6 +130,16 @@ Three shared predicates are built on top of it:
 | CH008 | `asyncio.run()` called from a running loop | `Call` to `asyncio.run` whose *immediate* enclosing function is an `AsyncFunctionDef` |
 | CH009 | non-daemon `threading.Thread` started, never joined | assignment/chained call to `threading.Thread(...)`, `.start()` seen, no `.join()`, no `daemon=True`, not returned/stored as any object's attribute |
 | CH010 | lambda in a loop captures the loop variable by reference | `Lambda` referencing a `for`-loop's target name, *directly stored* (appended/assigned/returned) rather than passed as a callback argument that's consumed immediately |
+| CH011 | `@lru_cache`/`@cache` on an instance method | decorator resolves to `lru_cache`/`cache`, enclosing scope is a `ClassDef`, not `staticmethod`/`classmethod` |
+| CH012 | non-daemon `multiprocessing.Process` started, never joined | same shape as CH009, for `multiprocessing.Process(...)` |
+| CH013 | discarded `Executor.submit(...)` result | bare `Expr` wrapping `.submit(...)` on a name tracked back to a `ThreadPoolExecutor`/`ProcessPoolExecutor` construction |
+| CH014 | `lock.acquire()` outside a `with`, `.release()` not in `finally:` | matching `.release()` call on the same name exists in the function, but no enclosing `Try.finalbody` contains it |
+| CH015 | `@property`/`@cached_property` wrapping `async def` | decorated node is an `AsyncFunctionDef` |
+| CH016 | `socket.socket(...)` never closed | same shape as CH005, for `socket.socket(...)` |
+| CH017 | `from collections import Mapping` (etc.) / `collections.Mapping` | name matches a curated ABC set, import/attribute receiver is bare `collections` (not `collections.abc`) |
+| CH018 | `asyncio.Task.current_task()` / `.all_tasks()` | attribute call on `Task`, only trusted when `Task` was imported via `from asyncio import Task` |
+| CH019 | `inspect.getargspec(...)` | attribute call/import resolves to `inspect.getargspec` |
+| CH020 | bare `except:` / unused `except BaseException:` | handler type is `None` or `Name("BaseException")`, bound name (if any) not referenced, and no `raise` anywhere in the handler's own scope |
 
 Each lives in its own file with a module docstring explaining the bug and a
 real-world example of where it was found.
@@ -155,6 +175,15 @@ suppressions exist specifically to avoid noise:
   loop (real, in marimo) looks identical at the AST level to the buggy
   pattern, but `sorted()` consumes the lambda synchronously within the
   same iteration, so nothing ever observes a stale value.
+- **CH020** doesn't flag a `BaseException` handler whose bound name is
+  actually referenced anywhere in the body (agno's background-thread
+  runner reports the caught exception back via a queue instead of
+  discarding it), or a handler — bound name or not — that contains a
+  `raise` anywhere in its own scope, not counting a nested try/except's
+  own handler (agno's `_ensure_session` resets internal state on a failed
+  connect, then bare-`raise`s to propagate the original error). Both were
+  real false positives found by checking actual corpus hits, not just
+  reasoning about the shape.
 
 The test suite asserts **both directions** for every rule: the bad pattern *is*
 flagged, and the idiomatic fix is *not*.

@@ -4,7 +4,7 @@
 
 <h1 align="center">codehound</h1>
 
-**An AST-based static analyzer that hunts *real* bugs in large Python codebases — seven of the ten rules are backed by a bug that was actually found and merged into a major open-source AI framework; the other three are hardening rules verified against real false positives instead.**
+**An AST-based static analyzer that hunts *real* bugs in large Python codebases — twenty checks, seven backed by a bug that was actually found and merged into a major open-source AI framework, the rest hardening rules verified against real false positives across a ~20-framework validation corpus instead of just reasoned about.**
 
 [![CI](https://github.com/kratos0718/codehound/actions/workflows/ci.yml/badge.svg)](https://github.com/kratos0718/codehound/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/codehound.svg)](https://pypi.org/project/codehound/)
@@ -51,7 +51,7 @@ I was contributing bug fixes to large AI frameworks and noticed the same handful
 pip install codehound
 ```
 
-Zero dependencies — it's ~750 lines on top of the standard-library `ast` module, so this installs instantly and runs fully offline, no API key or network call involved.
+Zero dependencies — it's ~2,200 lines on top of the standard-library `ast` module, so this installs instantly and runs fully offline, no API key or network call involved.
 
 <details>
 <summary>From a clone instead (for development)</summary>
@@ -112,7 +112,7 @@ Uploads findings to the repo's **Security → Code Scanning** tab via SARIF, in 
 ```yaml
 repos:
   - repo: https://github.com/kratos0718/codehound
-    rev: v1.3.0
+    rev: v1.4.0
     hooks:
       - id: codehound
 ```
@@ -133,15 +133,25 @@ repos:
 | **CH008** | `asyncio-run-in-running-loop` | `asyncio.run(...)` called from inside an `async def` — always raises `RuntimeError`, immediately, every time. | hardening rule — zero corpus hits (see below) |
 | **CH009** | `floating-thread` | A non-daemon `threading.Thread` that's `.start()`ed but never `.join()`ed — the thread analog of CH006. | hardening rule — see below |
 | **CH010** | `loop-closure-capture` | A `lambda` inside a `for` loop (or comprehension) that's *stored* (appended, assigned, returned) and captures the loop variable by reference — every stored instance ends up sharing the loop's **final** value. | **accelerate** (HuggingFace) — `MegatronEngine.get_module_config`'s `param_sync_func` list, PR #4273 |
+| **CH011** | `lru-cache-on-method` | `@lru_cache`/`@cache` decorating an instance method — the cache holds a strong reference to `self` forever, so every instance that ever calls the method leaks for the process lifetime. | hardening rule — real hits across litellm, vllm, accelerate, marimo, dspy |
+| **CH012** | `floating-process` | A non-daemon `multiprocessing.Process` that's `.start()`ed but never `.join()`ed — the process analog of CH009. | hardening rule |
+| **CH013** | `discarded-future` | `ThreadPoolExecutor`/`ProcessPoolExecutor.submit(...)` called as a bare statement — the returned `Future` (and any exception raised inside the submitted work) is silently discarded. | hardening rule — real hits in litellm, accelerate, langchain |
+| **CH014** | `unprotected-lock-acquire` | `lock.acquire()` outside a `with`, whose matching `.release()` isn't inside a `finally:` — an exception between acquire and release deadlocks every future caller of that lock. | hardening rule — real hits in vllm, accelerate, torchtune |
+| **CH015** | `async-property` | `@property`/`@cached_property` wrapping an `async def` — accessing the attribute hands back an un-awaited coroutine object, not the value. | hardening rule |
+| **CH016** | `unclosed-socket` | `socket.socket(...)` stored without a context manager or matching `.close()` — the socket analog of CH005; leaks the file descriptor. | hardening rule |
+| **CH017** | `collections-abc-import` | `from collections import Mapping` (or `Sequence`, `Iterable`, …) — the ABCs were removed from `collections` itself in Python 3.10; they live in `collections.abc`. | hardening rule |
+| **CH018** | `removed-asyncio-task-methods` | `asyncio.Task.current_task()` / `.all_tasks()` — both removed in Python 3.9; use `asyncio.current_task()` / `asyncio.all_tasks()`. | hardening rule |
+| **CH019** | `removed-getargspec` | `inspect.getargspec(...)` — removed in Python 3.11 after a decade-plus deprecation; use `inspect.signature(...)`. | hardening rule |
+| **CH020** | `bare-except` | A bare `except:` (or unused `except BaseException:`) — also catches `KeyboardInterrupt`/`SystemExit`, so Ctrl-C stops working and `sys.exit()` gets silently absorbed. | hardening rule — real hits in agno, llama_index, marimo, litellm |
 
 `codehound list` prints this from the source of truth.
 
-CH007-CH010 don't have found-and-merged bugs behind all of them the way
-CH001-CH006 do - three are hardening rules for well-known Python
+CH007-CH020 don't have found-and-merged bugs behind all of them the way
+CH001-CH006 and CH010 do - most are hardening rules for well-known Python
 correctness gotchas rather than something this project personally
 tracked down first. CH010 is the exception: it found a genuine, serious
-bug on its own, in HuggingFace's `accelerate` - see below. Building all
-four surfaced real false positives, each one fixed before shipping:
+bug on its own, in HuggingFace's `accelerate` - see below. Building
+CH007-CH010 surfaced real false positives, each one fixed before shipping:
 
 - **CH007** (agno): a bare `self.foo()` call matched against an unrelated
   same-named `async def foo` on a *different* class (agno's own
@@ -179,14 +189,27 @@ it's very unlikely to survive basic testing; CH007 and CH009 both only
 match same-file names by design, and most real cases of either are
 plausibly cross-module.
 
-**One check we built and did not ship: CH011 `exception-chaining`**
-(`except X as e: raise Y(...)` with no `from e`, discarding the real
-traceback - overlaps flake8-bugbear B904). It worked exactly as designed,
-but at a scale that says more about how common the pattern is than about
-anything worth flagging: **1,911 hits across the same ~20-framework
-corpus**. Shipping a check that fires that often would make every scan
-result mostly CH011 noise, undermining the "a finding must be defensible"
-standard the rest of this tool holds itself to. Built, measured, and
+**Two checks we built and did not ship.** `exception-chaining` (`except X
+as e: raise Y(...)` with no `from e`, discarding the real traceback -
+overlaps flake8-bugbear B904) worked exactly as designed, but at a scale
+that says more about how common the pattern is than about anything worth
+flagging: **1,911 hits across the same ~20-framework corpus**. Shipping a
+check that fires that often would make every scan result mostly noise,
+undermining the "a finding must be defensible" standard the rest of this
+tool holds itself to.
+
+`cancelled-error-swallowed` (`except asyncio.CancelledError: pass` -
+premise: silently swallowing task cancellation is a bug) went further
+than volume alone: the **first two real hits checked**, in two different
+frameworks, were both correct code, not bugs. agno's was `existing_task.
+cancel(); try: await existing_task; except CancelledError: pass` - the
+textbook-correct way to await a task's own cancellation. letta's was an
+explicit, logged recovery path (`except (CancelledError, ...) as e: logger
+.info(...); <continue processing>`) with a comment literally saying it was
+overriding the cancellation on purpose. Unlike the exception-chaining
+volume problem, this one meant the check's core premise was false in a
+large fraction of real occurrences - so it was deleted outright rather
+than kept at a lower confidence tier. Both are: built, measured, and
 deliberately left out - a real decision, not an oversight.
 
 ---
@@ -211,12 +234,22 @@ codehound/
     ├── unawaited_coroutine.py (CH007)
     ├── asyncio_run_in_loop.py (CH008)
     ├── floating_thread.py     (CH009)
-    └── loop_closure_capture.py (CH010)
+    ├── loop_closure_capture.py (CH010)
+    ├── lru_cache_on_method.py  (CH011)
+    ├── floating_process.py     (CH012)
+    ├── discarded_future.py     (CH013)
+    ├── unprotected_lock.py     (CH014)
+    ├── async_property.py       (CH015)
+    ├── unclosed_socket.py      (CH016)
+    ├── collections_abc_import.py (CH017)
+    ├── removed_asyncio_task_methods.py (CH018)
+    ├── removed_getargspec.py   (CH019)
+    └── bare_except.py          (CH020)
 ```
 
 Each check receives a parsed `ast` tree plus the precomputed parent map and returns `Finding`s. Adding a rule is one file + one registry line + a test. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a full walkthrough of the engine, the parent map, and the design decisions.
 
-**False-positive discipline is a feature.** CH005 won't flag a handle that's `return`ed (the caller owns it) or explicitly `.close()`d. CH006 won't flag `TaskGroup.create_task` (the group holds the reference). CH001 only fires when the *enclosing* function is `async`. CH007 scopes `self.foo()` matches to async methods on the *same* class as the call site, and bare `foo()` matches to module-level async functions that aren't shadowed by a same-named parameter. CH009 doesn't flag a thread handed off as *any* object's attribute, not just `self`. CH010 only fires when a lambda is directly stored (appended, assigned, returned), not merely passed as a callback argument that gets consumed on the spot. All four of those guards exist because of real false positives caught while building the checks (see above). The test suite asserts both "bad code is flagged" and "correct code is not."
+**False-positive discipline is a feature.** CH005 won't flag a handle that's `return`ed (the caller owns it) or explicitly `.close()`d. CH006 won't flag `TaskGroup.create_task` (the group holds the reference). CH001 only fires when the *enclosing* function is `async`. CH007 scopes `self.foo()` matches to async methods on the *same* class as the call site, and bare `foo()` matches to module-level async functions that aren't shadowed by a same-named parameter. CH009 doesn't flag a thread handed off as *any* object's attribute, not just `self`. CH010 only fires when a lambda is directly stored (appended, assigned, returned), not merely passed as a callback argument that gets consumed on the spot. CH020 won't flag a `BaseException` handler whose bound name is actually referenced, or whose body re-raises anywhere in its own scope (not counting a nested try/except's own handler) — both real patterns found in agno. All of those guards exist because of real false positives caught while building the checks (see above and [`docs/FINDINGS.md`](docs/FINDINGS.md)). The test suite asserts both "bad code is flagged" and "correct code is not."
 
 ---
 
@@ -243,6 +276,9 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
 - [x] SARIF output — `--format sarif`
 - [x] Colored terminal output (auto-disabled for non-TTY / `NO_COLOR`)
 - [x] Multi-path `scan` invocation (what the pre-commit hook needs)
+- [x] 20 checks — memory leaks (`lru_cache` on methods), floating processes,
+      discarded futures, unprotected locks, async properties, unclosed
+      sockets, removed-in-3.9/3.10/3.11 stdlib APIs, bare `except:` — CH011-CH020
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Sync HTTP clients constructed inside async request handlers
 - [ ] `--fix` for the mechanical rules (CH002, CH003, CH004)

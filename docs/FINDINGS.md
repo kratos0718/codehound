@@ -1,10 +1,11 @@
 # Findings in the wild
 
-Seven of the ten `codehound` rules were distilled from a bug found in a
+Seven of the twenty `codehound` rules were distilled from a bug found in a
 real, widely-used open-source project, with the fix submitted as a pull
-request. The other three (CH007, CH008, CH009) are hardening rules
-verified through real false positives instead of a found-and-merged bug -
-see "Notes on precision" below for why, and what that absence itself says.
+request. The rest (CH007-CH009, CH011-CH020) are hardening rules verified
+through real false positives against a ~20-framework validation corpus
+instead of a found-and-merged bug - see "Notes on precision" below for
+why, and what that absence itself says.
 
 | Rule | Project | ⭐ | The bug | Fix |
 |------|---------|----|---------|-----|
@@ -87,15 +88,55 @@ the false positives a naive grep would have reported:
   check to require that the lambda be directly *stored* - an argument to
   `.append()`/`.add()`, the value of an assignment, or `return`ed/`yield`ed
   - rather than merely passed as an argument to *anything*.
-- **CH011, built and not shipped** — a check for `except X as e: raise
-  Y(...)` with no `from e` (discards the real traceback; overlaps
-  flake8-bugbear B904) worked exactly as designed and found **1,911 hits
-  across the same ~20-framework corpus**. That volume is itself the
-  finding: the pattern is common enough that flagging it everywhere would
-  make codehound read as a noisy style linter rather than a tool whose
-  every finding is defensible. Removed from the shipped check set rather
-  than quietly kept at a lower confidence tier - a real design decision,
-  documented here instead of just left out silently.
+- **`exception-chaining`, built and not shipped** — a check for `except X
+  as e: raise Y(...)` with no `from e` (discards the real traceback;
+  overlaps flake8-bugbear B904) worked exactly as designed and found
+  **1,911 hits across the same ~20-framework corpus**. That volume is
+  itself the finding: the pattern is common enough that flagging it
+  everywhere would make codehound read as a noisy style linter rather than
+  a tool whose every finding is defensible. Removed from the shipped check
+  set rather than quietly kept at a lower confidence tier - a real design
+  decision, documented here instead of just left out silently.
+- **`cancelled-error-swallowed`, built and not shipped** — a check for
+  `except asyncio.CancelledError: pass`, premised on "silently swallowing
+  task cancellation is a bug." This one failed on more than volume: the
+  **first two real hits checked, in two different frameworks, were both
+  correct code**. agno's was `existing_task.cancel(); try: await
+  existing_task; except CancelledError: pass` - the textbook-correct way
+  to await a task's own cancellation, not a bug. letta's was an explicit
+  logged recovery path, `except (asyncio.CancelledError,
+  RunCancelledException) as e: logger.info(...); async for message in
+  self._process_event(...)`, with the log message itself saying it was
+  deliberately overriding the cancellation. Unlike exception-chaining's
+  volume problem, this meant the check's underlying premise was false in a
+  large fraction of real occurrences at 118 corpus hits, so it was deleted
+  outright (file removed, not kept at a lower tier) rather than patched -
+  a lesson from checking real hits before trusting a check that "worked"
+  by its own logic.
+- **CH020 (agno, two distinct false-positive shapes)** — a bare `except:`
+  or unused `except BaseException:` also catches `KeyboardInterrupt`/
+  `SystemExit`, so it's flagged unconditionally by default. Two real
+  patterns in agno needed guards before that default was safe to ship.
+  First, `agents/base.py`'s background-thread runner does `except
+  BaseException as e: thread_error.append(e)`, then surfaces the caught
+  exception to the consumer via a queue afterward, `finally:` guaranteeing
+  the consumer never blocks - not a swallow, since the exception is
+  captured and used; fixed by skipping when the bound name is referenced
+  anywhere in the handler body. Second, `context/mcp/provider.py`'s
+  `_ensure_session` does `except BaseException:` (no bound name at all)
+  around a `_connect()` call, then resets `self._tools`/
+  `self._tool_descriptions` and bare-`raise`s to propagate the original
+  error after cleanup - the first guard didn't apply since there was no
+  name to check, so a second guard was added: skip when the handler
+  contains a `raise` anywhere in its own scope (not counting a nested
+  try/except's own handler, the same scoping pitfall already solved for
+  `exception-chaining` above). Fixing both cut CH020's corpus-wide hit
+  count from 200+ to roughly 50, and a follow-up scan of the remaining
+  hits (llama_index's event dispatcher: `except BaseException: pass`
+  around every registered handler call, no logging, no re-raise) confirmed
+  they're real - the check earns its keep at the same rate a well-known
+  linter rule does (this is pylint's `W0702`/flake8-bugbear's `B036`
+  territory), not a modeling bug like the two rejected checks above.
 
 These are why the test suite asserts *both* directions: bad code flagged, good code
 left alone.
