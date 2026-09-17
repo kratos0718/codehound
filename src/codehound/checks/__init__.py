@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from codehound.checks.asyncio_run_in_loop import AsyncioRunInRunningLoop
 from codehound.checks.blocking_async import BlockingCallInAsync
 from codehound.checks.datetime_utcnow import DeprecatedDatetimeUtcnow
 from codehound.checks.floating_task import FloatingTask
+from codehound.checks.floating_thread import FloatingThread
 from codehound.checks.get_event_loop import DeprecatedGetEventLoop
+from codehound.checks.loop_closure_capture import LoopClosureCapture
 from codehound.checks.mutable_defaults import MutableDefaultArgument
 from codehound.checks.resource_leak import UnclosedFileHandle
 from codehound.checks.unawaited_coroutine import UnawaitedCoroutineCall
@@ -19,6 +22,9 @@ ALL_CHECKS: list[type[Check]] = [
     UnclosedFileHandle,
     FloatingTask,
     UnawaitedCoroutineCall,
+    AsyncioRunInRunningLoop,
+    FloatingThread,
+    LoopClosureCapture,
 ]
 
 

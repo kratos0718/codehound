@@ -41,7 +41,10 @@ src/codehound/
 │   ├── get_event_loop.py     CH004
 │   ├── resource_leak.py      CH005
 │   ├── floating_task.py      CH006
-│   └── unawaited_coroutine.py CH007
+│   ├── unawaited_coroutine.py CH007
+│   ├── asyncio_run_in_loop.py CH008
+│   ├── floating_thread.py     CH009
+│   └── loop_closure_capture.py CH010
 └── __init__.py      # public API surface + __version__
 ```
 
@@ -101,7 +104,7 @@ Three shared predicates are built on top of it:
 3. `scan_path` aggregates and sorts findings by `(path, line, col, code)` so
    output is deterministic — important for diffing in CI.
 
-## The seven checks
+## The ten checks
 
 | Code | Detects | Key structural test |
 |------|---------|--------------------|
@@ -112,6 +115,9 @@ Three shared predicates are built on top of it:
 | CH005 | `f = open(...)` never closed | assignment from `open()`, not inside a `with`, no matching `.close()` in the function, not `return`ed |
 | CH006 | discarded `create_task()` / `ensure_future()` | a bare `Expr` statement wrapping the call (result not bound/awaited/returned) |
 | CH007 | `async def` called without `await`/scheduling | bare `Expr` wrapping a `Call` whose target resolves to a same-file `async def` - module-level for bare names, same-class for `self./cls.` |
+| CH008 | `asyncio.run()` called from a running loop | `Call` to `asyncio.run` whose *immediate* enclosing function is an `AsyncFunctionDef` |
+| CH009 | non-daemon `threading.Thread` started, never joined | assignment/chained call to `threading.Thread(...)`, `.start()` seen, no `.join()`, no `daemon=True`, not returned/stored as any object's attribute |
+| CH010 | lambda in a loop captures the loop variable by reference | `Lambda` referencing a `for`-loop's target name, *directly stored* (appended/assigned/returned) rather than passed as a callback argument that's consumed immediately |
 
 Each lives in its own file with a module docstring explaining the bug and a
 real-world example of where it was found.
@@ -135,6 +141,18 @@ suppressions exist specifically to avoid noise:
   against the enclosing function's own parameters first — a parameter
   shadows a same-named module-level `async def` elsewhere in the file
   (also a real false positive found while building this).
+- **CH009** treats a thread assigned as *any* object's attribute as an
+  intentional hand-off, not just `self.<attr>` — llama_index's chat
+  engines stash the thread on a returned response object
+  (`chat_response.write_response_to_history_thread = thread`), which
+  joins it later once the caller finishes consuming the stream.
+- **CH010** only fires when a lambda is directly *stored* (an argument to
+  `.append()`/`.add()`, the value of an assignment, or `return`ed/`yield`ed)
+  — not merely passed as a callback to something that calls it immediately.
+  `sorted(rows, key=lambda row: row[sort_arg.by])` inside a `for sort_arg`
+  loop (real, in marimo) looks identical at the AST level to the buggy
+  pattern, but `sorted()` consumes the lambda synchronously within the
+  same iteration, so nothing ever observes a stale value.
 
 The test suite asserts **both directions** for every rule: the bad pattern *is*
 flagged, and the idiomatic fix is *not*.

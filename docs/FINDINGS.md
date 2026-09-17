@@ -1,10 +1,10 @@
 # Findings in the wild
 
-Six of the seven `codehound` rules were distilled from a bug found in a
+Seven of the ten `codehound` rules were distilled from a bug found in a
 real, widely-used open-source project, with the fix submitted as a pull
-request. The seventh (CH007) is a hardening rule verified through real
-false positives instead of a found-and-merged bug - see "Notes on
-precision" below for why, and what that absence itself says.
+request. The other three (CH007, CH008, CH009) are hardening rules
+verified through real false positives instead of a found-and-merged bug -
+see "Notes on precision" below for why, and what that absence itself says.
 
 | Rule | Project | ⭐ | The bug | Fix |
 |------|---------|----|---------|-----|
@@ -18,6 +18,7 @@ precision" below for why, and what that absence itself says.
 | CH005 `unclosed-file-handle` | agno | 25k+ | `audio_file = open(audio_path, "rb")` never closed in `OpenAITools.transcribe_audio` | wrapped in `with open(...) as audio_file:` |
 | CH006 + CH004 `floating-task` + `deprecated-get-event-loop` | agno | 25k+ | **Found by codehound itself:** fire-and-forget `asyncio.create_task` + deprecated `get_event_loop()` in `tracing/exporter.py::_export_async` — traces could be silently dropped | PR #8183 (open) — strong task ref (set + done-callback) + `get_running_loop()` |
 | CH006 `floating-task` | agno | 25k+ | Two more `asyncio.create_task(...)` results discarded in `Workflow._broadcast_to_websocket` / `_apublish_stream_event` — same weak-reference GC risk as #8183 above | PR #10222 (open) — retained via the file's existing `_workflow_background_tasks` set + done-callback |
+| CH010 `loop-closure-capture` | accelerate (HuggingFace) | 9k+ | **Found by codehound itself:** `MegatronEngine.get_module_config`'s `param_sync_func` list builds one callback per distributed-training model chunk, but every lambda captures `model_index` by reference - whichever chunk's callback fires, it reports the *last* chunk's index to `finish_param_sync`, not its own | PR [huggingface/accelerate#4273](https://github.com/huggingface/accelerate/pull/4273) (open) — `model_index=model_index` default-arg capture; isolated regression test (the real method needs the optional `megatron-core` package, not available in CI) verified to fail pre-fix (all callbacks report index 2) and pass post-fix |
 
 ## Notes on precision
 
@@ -62,14 +63,55 @@ the false positives a naive grep would have reported:
   by design doesn't chase cross-module calls, which is plausibly where most
   real "unawaited coroutine" bugs actually live, and mature async test
   suites likely catch same-file cases before merge anyway.
+- **CH009 (llama_index)** — six chat-engine `stream_chat` methods
+  (`SimpleChatEngine`, `CondenseQuestionChatEngine`,
+  `ContextChatEngine`, and their multi-modal / condense-plus-context
+  variants) all spawn a background thread that writes the response to
+  memory, then do `chat_response.write_response_to_history_thread = thread`
+  and `return chat_response` - never `thread.join()` directly. Looked like
+  six real leaks. It isn't: `chat_engine/types.py` joins the thread through
+  that exact attribute once the caller finishes consuming the stream
+  (`self.write_response_to_history_thread.join()`). The thread is handed
+  off through a *different* object's attribute, not lost. Fixed the check
+  to treat assignment to any object's attribute as an intentional escape,
+  not just `self.<attr>`.
+- **CH010 (marimo)** — `default_table.py`'s row sorter does
+  `sorted(non_none_rows, key=lambda row: row[sort_arg.by], ...)` inside
+  `for sort_arg in reversed(by):`. The lambda references the loop
+  variable, which is exactly the buggy shape - except `sorted()` calls the
+  lambda immediately and synchronously, entirely within the current
+  iteration, before `sort_arg` ever moves on. Nothing is ever stale. This
+  is the single most common way a lambda actually appears inside a real
+  loop (as a `key=`/`filter`-style callback, not a stored closure), so
+  getting this wrong would have made CH010 fire constantly. Rewrote the
+  check to require that the lambda be directly *stored* - an argument to
+  `.append()`/`.add()`, the value of an assignment, or `return`ed/`yield`ed
+  - rather than merely passed as an argument to *anything*.
+- **CH011, built and not shipped** — a check for `except X as e: raise
+  Y(...)` with no `from e` (discards the real traceback; overlaps
+  flake8-bugbear B904) worked exactly as designed and found **1,911 hits
+  across the same ~20-framework corpus**. That volume is itself the
+  finding: the pattern is common enough that flagging it everywhere would
+  make codehound read as a noisy style linter rather than a tool whose
+  every finding is defensible. Removed from the shipped check set rather
+  than quietly kept at a lower confidence tier - a real design decision,
+  documented here instead of just left out silently.
 
 These are why the test suite asserts *both* directions: bad code flagged, good code
 left alone.
 
-## A bug the tool found on its own
+## Bugs the tool found on its own
 
-The CH001 entry for the Discord client above is the project's proof point: it was
-**not** a bug I already knew about. I pointed `codehound` at agno's source after
-building it, and CH001 surfaced two `requests.get()` calls sitting inside the
-async `on_message` handler. Verified, fixed with `await media.read()`, added a
-regression test, opened a PR. The tool earned its keep on day one.
+The CH001 entry for the Discord client above is the project's original proof
+point: it was **not** a bug I already knew about. I pointed `codehound` at
+agno's source after building it, and CH001 surfaced two `requests.get()`
+calls sitting inside the async `on_message` handler. Verified, fixed with
+`await media.read()`, added a regression test, opened a PR. The tool earned
+its keep on day one.
+
+CH010 repeated that story on a much bigger stage: pointed at HuggingFace's
+`accelerate` after fixing its two false positives, it surfaced a genuine
+closure-capture bug in distributed-training parameter-sync callbacks - the
+kind of thing that would silently corrupt which model chunk's gradients get
+synced, in a library used across the entire PyTorch training ecosystem. Not
+a bug I was looking for; the scan found it.

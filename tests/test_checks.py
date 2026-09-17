@@ -280,3 +280,190 @@ def test_ch007_ignores_name_shadowed_by_parameter():
         "    ...\n"
     )
     assert _run(code, ["CH007"]) == []
+
+
+# --- CH008 asyncio-run-in-running-loop ---------------------------------------------
+
+
+def test_ch008_flags_asyncio_run_inside_async_def():
+    code = (
+        "import asyncio\n"
+        "async def f():\n"
+        "    asyncio.run(g())\n"
+    )
+    findings = _run(code, ["CH008"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH008"
+
+
+def test_ch008_ignores_asyncio_run_in_sync_function():
+    code = (
+        "import asyncio\n"
+        "def main():\n"
+        "    asyncio.run(g())\n"
+    )
+    assert _run(code, ["CH008"]) == []
+
+
+def test_ch008_ignores_asyncio_run_in_nested_sync_function():
+    # inner() is itself sync; whether calling it from a running loop is
+    # safe depends on what thread it runs on, which this check can't know.
+    code = (
+        "import asyncio\n"
+        "async def outer():\n"
+        "    def inner():\n"
+        "        asyncio.run(g())\n"
+        "    inner()\n"
+    )
+    assert _run(code, ["CH008"]) == []
+
+
+# --- CH009 floating-thread ----------------------------------------------------------
+
+
+def test_ch009_flags_chained_start_with_no_reference():
+    code = (
+        "import threading\n"
+        "def f():\n"
+        "    threading.Thread(target=work).start()\n"
+    )
+    findings = _run(code, ["CH009"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH009"
+
+
+def test_ch009_ignores_chained_daemon_thread():
+    code = (
+        "import threading\n"
+        "def f():\n"
+        "    threading.Thread(target=work, daemon=True).start()\n"
+    )
+    assert _run(code, ["CH009"]) == []
+
+
+def test_ch009_flags_assigned_thread_never_joined():
+    code = (
+        "import threading\n"
+        "def f():\n"
+        "    t = threading.Thread(target=work)\n"
+        "    t.start()\n"
+    )
+    findings = _run(code, ["CH009"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH009"
+
+
+def test_ch009_ignores_assigned_thread_that_is_joined():
+    code = (
+        "import threading\n"
+        "def f():\n"
+        "    t = threading.Thread(target=work)\n"
+        "    t.start()\n"
+        "    t.join()\n"
+    )
+    assert _run(code, ["CH009"]) == []
+
+
+def test_ch009_ignores_thread_returned_to_caller():
+    code = (
+        "import threading\n"
+        "def f():\n"
+        "    t = threading.Thread(target=work)\n"
+        "    t.start()\n"
+        "    return t\n"
+    )
+    assert _run(code, ["CH009"]) == []
+
+
+def test_ch009_ignores_thread_handed_off_via_another_objects_attribute():
+    # Real false positive found in llama_index: the thread is stashed on a
+    # *different* object's attribute (not self), which is itself returned;
+    # that object joins the thread later once its caller finishes with it.
+    code = (
+        "import threading\n"
+        "def f():\n"
+        "    response = ChatResponse()\n"
+        "    t = threading.Thread(target=work)\n"
+        "    response.write_response_to_history_thread = t\n"
+        "    t.start()\n"
+        "    return response\n"
+    )
+    assert _run(code, ["CH009"]) == []
+
+
+def test_ch009_ignores_daemon_set_after_construction():
+    code = (
+        "import threading\n"
+        "def f():\n"
+        "    t = threading.Thread(target=work)\n"
+        "    t.daemon = True\n"
+        "    t.start()\n"
+    )
+    assert _run(code, ["CH009"]) == []
+
+
+def test_ch009_ignores_thread_never_started():
+    # Created but never run at all - not a "floating" thread, just inert.
+    code = (
+        "import threading\n"
+        "def f():\n"
+        "    t = threading.Thread(target=work)\n"
+        "    return t.name\n"
+    )
+    assert _run(code, ["CH009"]) == []
+
+
+# --- CH010 loop-closure-capture ------------------------------------------------------
+
+
+def test_ch010_flags_lambda_capturing_loop_variable_in_list():
+    code = "callbacks = []\nfor i in range(3):\n    callbacks.append(lambda: i)\n"
+    findings = _run(code, ["CH010"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH010"
+
+
+def test_ch010_flags_lambda_in_list_comprehension():
+    code = "callbacks = [lambda: i for i in range(3)]\n"
+    findings = _run(code, ["CH010"])
+    assert len(findings) == 1
+
+
+def test_ch010_ignores_default_arg_capture():
+    code = "callbacks = []\nfor i in range(3):\n    callbacks.append(lambda i=i: i)\n"
+    assert _run(code, ["CH010"]) == []
+
+
+def test_ch010_ignores_lambda_not_referencing_loop_var():
+    code = "callbacks = []\nfor i in range(3):\n    callbacks.append(lambda: 42)\n"
+    assert _run(code, ["CH010"]) == []
+
+
+def test_ch010_ignores_immediately_invoked_lambda():
+    code = "results = []\nfor i in range(3):\n    results.append((lambda: i)())\n"
+    assert _run(code, ["CH010"]) == []
+
+
+def test_ch010_ignores_lambda_passed_as_sort_key():
+    # Real false positive found in marimo: sorted() calls the key function
+    # immediately, synchronously, using the loop variable's *current* value
+    # - nothing outlives the iteration, even though field is referenced.
+    code = (
+        "for sort_arg in by:\n"
+        "    rows = sorted(rows, key=lambda row: row[sort_arg.by])\n"
+    )
+    assert _run(code, ["CH010"]) == []
+
+
+def test_ch010_ignores_lambda_passed_to_filter():
+    code = "for prefix in prefixes:\n    kept = list(filter(lambda x: x.startswith(prefix), items))\n"
+    assert _run(code, ["CH010"]) == []
+
+
+def test_ch010_still_flags_lambda_appended_even_when_named_like_a_key_fn():
+    # Contrast case: same "lambda referencing loop var" shape, but this
+    # time it really is stored (appended) rather than consumed on the spot.
+    code = "keys = []\nfor field in fields:\n    keys.append(lambda row: row[field])\n"
+    findings = _run(code, ["CH010"])
+    assert len(findings) == 1
+
