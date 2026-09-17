@@ -1151,3 +1151,326 @@ def test_ch022_ignores_unrelated_attribute_named_coroutine():
     code = "import asyncio\n@other.coroutine\ndef f():\n    return 1\n"
     assert _run(code, ["CH022"]) == []
 
+
+# --- CH023 removed-stdlib-attribute ----------------------------------------------------
+
+
+def test_ch023_flags_time_clock():
+    findings = _run("import time\ntime.clock()\n", ["CH023"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH023"
+
+
+def test_ch023_flags_platform_linux_distribution_and_dist():
+    code = "import platform\nplatform.linux_distribution()\nplatform.dist()\n"
+    findings = _run(code, ["CH023"])
+    assert len(findings) == 2
+
+
+def test_ch023_flags_cgi_escape():
+    findings = _run("import cgi\ncgi.escape(x)\n", ["CH023"])
+    assert len(findings) == 1
+
+
+def test_ch023_flags_base64_encodestring_decodestring():
+    code = "import base64\nbase64.encodestring(x)\nbase64.decodestring(y)\n"
+    findings = _run(code, ["CH023"])
+    assert len(findings) == 2
+
+
+def test_ch023_ignores_replacement_calls():
+    code = "import time\ntime.perf_counter()\nimport base64\nbase64.encodebytes(x)\n"
+    assert _run(code, ["CH023"]) == []
+
+
+def test_ch023_ignores_unrelated_name_not_imported():
+    # Real name-collision guard: an unrelated local object named `time`
+    # with its own `.clock` attribute shouldn't be misidentified as the
+    # stdlib module unless `time` was actually imported.
+    code = "class Fake:\n    clock = 1\ntime = Fake()\nprint(time.clock)\n"
+    assert _run(code, ["CH023"]) == []
+
+
+# --- CH024 unittest-deprecated-alias ---------------------------------------------------
+
+
+def test_ch024_flags_assert_equals():
+    code = "class T:\n    def test_x(self):\n        self.assertEquals(1, 1)\n"
+    findings = _run(code, ["CH024"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH024"
+
+
+def test_ch024_flags_fail_unless_raises():
+    code = "class T:\n    def test_x(self):\n        self.failUnlessRaises(ValueError, f)\n"
+    findings = _run(code, ["CH024"])
+    assert len(findings) == 1
+
+
+def test_ch024_ignores_modern_assert_equal():
+    code = "class T:\n    def test_x(self):\n        self.assertEqual(1, 1)\n"
+    assert _run(code, ["CH024"]) == []
+
+
+# --- CH025 is-literal-comparison -------------------------------------------------------
+
+
+def test_ch025_flags_is_comparison_with_int_literal():
+    findings = _run("x = 1000\nif x is 1000:\n    pass\n", ["CH025"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH025"
+
+
+def test_ch025_flags_is_not_comparison_with_string_literal():
+    code = "x = 'hello world'\nif x is not 'hello world':\n    pass\n"
+    findings = _run(code, ["CH025"])
+    assert len(findings) == 1
+
+
+def test_ch025_ignores_is_none():
+    code = "x = None\nif x is None:\n    pass\n"
+    assert _run(code, ["CH025"]) == []
+
+
+def test_ch025_ignores_is_true_and_is_false():
+    code = "x = True\nif x is True:\n    pass\nif x is False:\n    pass\n"
+    assert _run(code, ["CH025"]) == []
+
+
+def test_ch025_ignores_equality_comparison():
+    code = "x = 1000\nif x == 1000:\n    pass\n"
+    assert _run(code, ["CH025"]) == []
+
+
+def test_ch025_ignores_is_comparison_between_two_names():
+    code = "if a is b:\n    pass\n"
+    assert _run(code, ["CH025"]) == []
+
+
+def test_ch025_ignores_chained_comparison_where_literal_pairs_with_different_op():
+    # Real false positive found in litellm: `"usage" in response_obj is
+    # not None` chains `in` and `is not` in one ast.Compare - the string
+    # literal is the left side of `in`, not of `is not`, which is
+    # comparing response_obj against the allowed singleton None. Each op
+    # must be checked against only its own adjacent operands.
+    code = "if 'usage' in response_obj is not None:\n    pass\n"
+    assert _run(code, ["CH025"]) == []
+
+
+def test_ch025_flags_literal_in_a_real_chained_is_comparison():
+    # `a is 5 is b` is two adjacent pairs (a is 5) and (5 is b) - both
+    # involve the literal, so both are correctly flagged individually.
+    code = "if a is 5 is b:\n    pass\n"
+    findings = _run(code, ["CH025"])
+    assert len(findings) == 2
+
+
+# --- CH026 mutable-class-attribute ------------------------------------------------------
+
+
+def test_ch026_flags_class_level_list_mutated_via_self():
+    code = (
+        "class Handler:\n"
+        "    listeners = []\n"
+        "    def register(self, cb):\n"
+        "        self.listeners.append(cb)\n"
+    )
+    findings = _run(code, ["CH026"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH026"
+
+
+def test_ch026_flags_class_level_dict_mutated_via_subscript():
+    code = (
+        "class Cache:\n"
+        "    store = {}\n"
+        "    def put(self, key, value):\n"
+        "        self.store[key] = value\n"
+    )
+    findings = _run(code, ["CH026"])
+    assert len(findings) == 1
+
+
+def test_ch026_ignores_when_reassigned_per_instance_in_init():
+    code = (
+        "class Handler:\n"
+        "    listeners = []\n"
+        "    def __init__(self):\n"
+        "        self.listeners = []\n"
+        "    def register(self, cb):\n"
+        "        self.listeners.append(cb)\n"
+    )
+    assert _run(code, ["CH026"]) == []
+
+
+def test_ch026_ignores_class_attribute_never_mutated_in_place():
+    code = (
+        "class Config:\n"
+        "    defaults = {}\n"
+        "    def get(self, key):\n"
+        "        return self.defaults.get(key)\n"
+    )
+    assert _run(code, ["CH026"]) == []
+
+
+def test_ch026_ignores_immutable_class_level_default():
+    code = "class C:\n    name = 'default'\n    def f(self):\n        return self.name\n"
+    assert _run(code, ["CH026"]) == []
+
+
+# --- CH027 unwaited-subprocess ----------------------------------------------------------
+
+
+def test_ch027_flags_popen_never_waited():
+    code = (
+        "import subprocess\n"
+        "def run():\n"
+        "    p = subprocess.Popen(['ls'])\n"
+        "    return p.pid\n"
+    )
+    findings = _run(code, ["CH027"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH027"
+
+
+def test_ch027_ignores_popen_with_context_manager():
+    code = "import subprocess\ndef run():\n    with subprocess.Popen(['ls']) as p:\n        return p.pid\n"
+    assert _run(code, ["CH027"]) == []
+
+
+def test_ch027_ignores_popen_with_wait_call():
+    code = "import subprocess\ndef run():\n    p = subprocess.Popen(['ls'])\n    p.wait()\n"
+    assert _run(code, ["CH027"]) == []
+
+
+def test_ch027_ignores_popen_with_communicate_call():
+    code = "import subprocess\ndef run():\n    p = subprocess.Popen(['ls'])\n    p.communicate()\n"
+    assert _run(code, ["CH027"]) == []
+
+
+def test_ch027_ignores_popen_returned_to_caller():
+    code = "import subprocess\ndef run():\n    p = subprocess.Popen(['ls'])\n    return p\n"
+    assert _run(code, ["CH027"]) == []
+
+
+def test_ch027_ignores_popen_passed_as_argument():
+    code = (
+        "import subprocess\n"
+        "def run():\n"
+        "    p = subprocess.Popen(['ls'])\n"
+        "    register_process(p)\n"
+    )
+    assert _run(code, ["CH027"]) == []
+
+
+def test_ch027_ignores_popen_stored_as_attribute():
+    # Real pattern found in dspy: `lm.process = process` hands the Popen
+    # off to a different object entirely, which reaps it later through a
+    # separate terminate_process(lm.process) call elsewhere.
+    code = (
+        "import subprocess\n"
+        "def run(lm):\n"
+        "    process = subprocess.Popen(['ls'])\n"
+        "    lm.process = process\n"
+    )
+    assert _run(code, ["CH027"]) == []
+
+
+# --- CH028 floating-timer ----------------------------------------------------------------
+
+
+def test_ch028_flags_chained_timer_start():
+    code = "import threading\nthreading.Timer(30, callback).start()\n"
+    findings = _run(code, ["CH028"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH028"
+
+
+def test_ch028_flags_assigned_timer_never_cancelled():
+    code = (
+        "import threading\n"
+        "def schedule():\n"
+        "    t = threading.Timer(30, callback)\n"
+        "    t.start()\n"
+    )
+    findings = _run(code, ["CH028"])
+    assert len(findings) == 1
+
+
+def test_ch028_ignores_timer_that_is_cancelled():
+    code = (
+        "import threading\n"
+        "def schedule():\n"
+        "    t = threading.Timer(30, callback)\n"
+        "    t.start()\n"
+        "    t.cancel()\n"
+    )
+    assert _run(code, ["CH028"]) == []
+
+
+def test_ch028_ignores_timer_returned_to_caller():
+    code = (
+        "import threading\n"
+        "def schedule():\n"
+        "    t = threading.Timer(30, callback)\n"
+        "    t.start()\n"
+        "    return t\n"
+    )
+    assert _run(code, ["CH028"]) == []
+
+
+def test_ch028_ignores_timer_stored_as_attribute():
+    code = (
+        "import threading\n"
+        "def schedule(obj):\n"
+        "    t = threading.Timer(30, callback)\n"
+        "    t.start()\n"
+        "    obj.timer = t\n"
+    )
+    assert _run(code, ["CH028"]) == []
+
+
+def test_ch028_ignores_unrelated_bare_timer_class():
+    # Real false positive found in agno: its own stopwatch-style Timer
+    # class (from agno.utils.timer import Timer), called as Timer() with
+    # no arguments at all - threading.Timer requires interval and
+    # function and would raise TypeError immediately if it were really
+    # that class.
+    code = "from mylib.timer import Timer\nt = Timer()\nt.start()\n"
+    assert _run(code, ["CH028"]) == []
+
+
+def test_ch028_flags_bare_timer_when_imported_from_threading():
+    code = "from threading import Timer\nTimer(30, callback).start()\n"
+    findings = _run(code, ["CH028"])
+    assert len(findings) == 1
+
+
+def test_ch028_ignores_daemon_true_kwarg_chained():
+    code = "import threading\nthreading.Timer(30, callback, daemon=True).start()\n"
+    assert _run(code, ["CH028"]) == []
+
+
+def test_ch028_ignores_daemon_true_kwarg_assigned():
+    code = (
+        "import threading\n"
+        "def schedule():\n"
+        "    t = threading.Timer(30, callback, daemon=True)\n"
+        "    t.start()\n"
+    )
+    assert _run(code, ["CH028"]) == []
+
+
+def test_ch028_ignores_daemon_set_post_construction():
+    # Real pattern found in weaviate-python-client: a watchdog timer
+    # explicitly marked daemon=True after construction, a deliberate
+    # "let this outlive the caller" choice, same escape CH009 recognizes.
+    code = (
+        "import threading\n"
+        "def schedule():\n"
+        "    t = threading.Timer(30, callback)\n"
+        "    t.daemon = True\n"
+        "    t.start()\n"
+    )
+    assert _run(code, ["CH028"]) == []
+

@@ -58,11 +58,17 @@ src/codehound/
 │   ├── removed_getargspec.py   CH019
 │   ├── bare_except.py          CH020
 │   ├── removed_stdlib_module.py CH021
-│   └── asyncio_coroutine_decorator.py CH022
+│   ├── asyncio_coroutine_decorator.py CH022
+│   ├── removed_stdlib_attribute.py CH023
+│   ├── unittest_deprecated_alias.py CH024
+│   ├── is_literal_comparison.py CH025
+│   ├── mutable_class_attribute.py CH026
+│   ├── unwaited_subprocess.py  CH027
+│   └── floating_timer.py       CH028
 └── __init__.py      # public API surface + __version__
 ```
 
-~2,600 lines of source, zero runtime dependencies (standard-library `ast` only).
+~3,200 lines of source, zero runtime dependencies (standard-library `ast` only).
 
 ## The core contract
 
@@ -118,7 +124,7 @@ Three shared predicates are built on top of it:
 3. `scan_path` aggregates and sorts findings by `(path, line, col, code)` so
    output is deterministic — important for diffing in CI.
 
-## The twenty-two checks
+## The twenty-eight checks
 
 | Code | Detects | Key structural test |
 |------|---------|--------------------|
@@ -144,6 +150,12 @@ Three shared predicates are built on top of it:
 | CH020 | bare `except:` / unused `except BaseException:` | handler type is `None` or `Name("BaseException")`, bound name (if any) not referenced, and no `raise` anywhere in the handler's own scope |
 | CH021 | `import`/`from` of a removed stdlib module (`distutils`, PEP 594 modules) | import's top-level module name is in a curated removed-module set, `ImportFrom.level == 0` (absolute), not inside a `try:` body with an `ImportError`-or-broader handler |
 | CH022 | `@asyncio.coroutine` decorator | decorator resolves to `asyncio.coroutine`, or bare `coroutine` only when `from asyncio import coroutine` was seen in the file |
+| CH023 | a specific removed stdlib function (`time.clock`, `cgi.escape`, …) | `(module, attribute)` pair in a curated dict, module actually imported |
+| CH024 | deprecated `unittest.TestCase` alias (`assertEquals`, …) | `self.<alias>(...)` call where `<alias>` is in a curated dict |
+| CH025 | `is`/`is not` compared against a str/bytes/int/float literal | walks the comparison chain as adjacent `(left, op, right)` triples, flags only pairs where the op is `Is`/`IsNot` and one side is a non-singleton literal |
+| CH026 | class-level mutable default mutated in place via `self.<attr>` | class-body `Name = List/Dict/Set` (or empty factory call), a `self.<attr>` in-place mutation exists, no `self.<attr> = ...` reassignment anywhere in the class |
+| CH027 | `subprocess.Popen(...)` never waited/communicated | assignment from `Popen(...)`, not `with`-managed, no `.wait()`/`.communicate()`, not returned/passed-as-argument/stored-as-attribute |
+| CH028 | `threading.Timer(...)` started, never cancelled | same shape as CH009, `.cancel()` instead of `.join()`, plus `daemon=True` escape; bare `Timer` only trusted with `from threading import Timer` |
 
 Each lives in its own file with a module docstring explaining the bug and a
 real-world example of where it was found.
@@ -212,6 +224,19 @@ suppressions exist specifically to avoid noise:
   anything broader (real, found in agno's `try: import imghdr except
   ImportError: import filetype`) - a deliberate fallback already
   anticipates the exact removal being flagged.
+- **CH025** pairs each comparison op with only its own two adjacent
+  operands - a naive "is there a literal, is there an Is/IsNot, anywhere
+  in the chain" check matched litellm's `"usage" in response_obj is not
+  None` for the wrong reason (the literal is the left side of `in`, not
+  of `is not`, which is actually comparing against the allowed
+  singleton `None`).
+- **CH027** and **CH028** both treat a handle stored as *any* object's
+  attribute as a hand-off, matching CH009/CH016's precedent (real,
+  found in dspy's `lm.process = process` and weaviate-python-client's
+  watchdog timer respectively). CH028 also only trusts a bare
+  `Timer(...)` when `from threading import Timer` was actually seen -
+  agno's own unrelated stopwatch class, called as `Timer()` with zero
+  arguments, produced ~30 false positives before this guard existed.
 
 The test suite asserts **both directions** for every rule: the bad pattern *is*
 flagged, and the idiomatic fix is *not*.

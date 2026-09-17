@@ -13,17 +13,23 @@ from codehound.checks.discarded_future import DiscardedFuture
 from codehound.checks.floating_process import FloatingProcess
 from codehound.checks.floating_task import FloatingTask
 from codehound.checks.floating_thread import FloatingThread
+from codehound.checks.floating_timer import FloatingTimer
 from codehound.checks.get_event_loop import DeprecatedGetEventLoop
+from codehound.checks.is_literal_comparison import IsLiteralComparison
 from codehound.checks.loop_closure_capture import LoopClosureCapture
 from codehound.checks.lru_cache_on_method import LruCacheOnMethod
+from codehound.checks.mutable_class_attribute import MutableClassAttribute
 from codehound.checks.mutable_defaults import MutableDefaultArgument
 from codehound.checks.removed_asyncio_task_methods import RemovedAsyncioTaskMethods
 from codehound.checks.removed_getargspec import RemovedGetargspec
+from codehound.checks.removed_stdlib_attribute import RemovedStdlibAttribute
 from codehound.checks.removed_stdlib_module import RemovedStdlibModule
 from codehound.checks.resource_leak import UnclosedFileHandle
 from codehound.checks.unawaited_coroutine import UnawaitedCoroutineCall
 from codehound.checks.unclosed_socket import UnclosedSocket
+from codehound.checks.unittest_deprecated_alias import UnittestDeprecatedAlias
 from codehound.checks.unprotected_lock import UnprotectedLockAcquire
+from codehound.checks.unwaited_subprocess import UnwaitedSubprocess
 from codehound.core import Check
 
 ALL_CHECKS: list[type[Check]] = [
@@ -49,6 +55,12 @@ ALL_CHECKS: list[type[Check]] = [
     BareExcept,
     RemovedStdlibModule,
     AsyncioCoroutineDecorator,
+    RemovedStdlibAttribute,
+    UnittestDeprecatedAlias,
+    IsLiteralComparison,
+    MutableClassAttribute,
+    UnwaitedSubprocess,
+    FloatingTimer,
 ]
 
 

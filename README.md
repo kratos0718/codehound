@@ -4,7 +4,7 @@
 
 <h1 align="center">codehound</h1>
 
-**An AST-based static analyzer that hunts *real* bugs in large Python codebases — twenty-two checks, eight backed by a bug that was actually found and merged (or opened as a PR) into a major open-source AI framework, the rest hardening rules verified against real false positives across a ~29-framework validation corpus instead of just reasoned about.**
+**An AST-based static analyzer that hunts *real* bugs in large Python codebases — twenty-eight checks, eight backed by a bug that was actually found and merged (or opened as a PR) into a major open-source AI framework, the rest hardening rules verified against real false positives across a ~29-framework validation corpus instead of just reasoned about.**
 
 [![CI](https://github.com/kratos0718/codehound/actions/workflows/ci.yml/badge.svg)](https://github.com/kratos0718/codehound/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/codehound.svg)](https://pypi.org/project/codehound/)
@@ -51,7 +51,7 @@ I was contributing bug fixes to large AI frameworks and noticed the same handful
 pip install codehound
 ```
 
-Zero dependencies — it's ~2,600 lines on top of the standard-library `ast` module, so this installs instantly and runs fully offline, no API key or network call involved.
+Zero dependencies — it's ~3,200 lines on top of the standard-library `ast` module, so this installs instantly and runs fully offline, no API key or network call involved.
 
 <details>
 <summary>From a clone instead (for development)</summary>
@@ -112,7 +112,7 @@ Uploads findings to the repo's **Security → Code Scanning** tab via SARIF, in 
 ```yaml
 repos:
   - repo: https://github.com/kratos0718/codehound
-    rev: v1.5.0
+    rev: v1.6.0
     hooks:
       - id: codehound
 ```
@@ -145,10 +145,16 @@ repos:
 | **CH020** | `bare-except` | A bare `except:` (or unused `except BaseException:`) — also catches `KeyboardInterrupt`/`SystemExit`, so Ctrl-C stops working and `sys.exit()` gets silently absorbed. | hardening rule — real hits in agno, llama_index, marimo, litellm |
 | **CH021** | `removed-stdlib-module` | `import distutils` (removed 3.12) or any of the 19 PEP 594 "dead battery" modules (`cgi`, `imghdr`, `telnetlib`, `nntplib`, …, removed 3.13) — `ImportError` the moment the module loads. | hardening rule — real hit in agno (already guarded, see below) |
 | **CH022** | `removed-asyncio-coroutine-decorator` | `@asyncio.coroutine` — removed in Python 3.11 after a generator-based-coroutine bridge that predates `async def`; `AttributeError` the moment the decorator line runs. | hardening rule |
+| **CH023** | `removed-stdlib-attribute` | A specific removed function on a module that still imports fine — `time.clock()` (3.8), `platform.linux_distribution()`/`.dist()` (3.8), `cgi.escape()` (3.8), `base64.encodestring()`/`.decodestring()` (3.9). | hardening rule — real hit in scikit-learn |
+| **CH024** | `unittest-deprecated-alias` | `self.assertEquals(...)`/`self.failUnless(...)` and a dozen other legacy `unittest.TestCase` aliases — removed in Python 3.12. | hardening rule |
+| **CH025** | `is-literal-comparison` | `x is 1000` / `x is not "foo"` — `is` checks identity, not equality; relies on CPython's small-int caching / string interning, neither guaranteed. (pyflakes F632) | hardening rule — real false positive fixed in litellm's own code, see below |
+| **CH026** | `mutable-class-attribute` | `class C: items = []` mutated via `self.items.append(...)` without ever being reassigned per instance — every instance shares and mutates the *same* list. | **vllm**, **llama_index**, **optuna**, **transformers** — see below |
+| **CH027** | `unwaited-subprocess` | `subprocess.Popen(...)` never `.wait()`ed/`.communicate()`d with, and not context-managed — risks a zombie process and a full pipe buffer deadlocking the child. | hardening rule — real hit in dspy (already handled, see below) |
+| **CH028** | `floating-timer` | `threading.Timer(...)` started but never `.cancel()`ed or handed off — nothing can stop the callback from firing later, on stale context. | hardening rule — real hits in marimo, transformers |
 
 `codehound list` prints this from the source of truth.
 
-CH007-CH022 don't have found-and-merged bugs behind all of them the way
+CH007-CH028 don't have found-and-merged bugs behind all of them the way
 CH001-CH006 do - most are hardening rules for well-known Python
 correctness gotchas rather than something this project personally
 tracked down first. CH010 and CH011 are the exceptions: both found
@@ -251,6 +257,60 @@ a `try:` body whose `except` catches `ImportError` (or anything
 broader). A full corpus rescan after both fixes found zero remaining
 CH021 hits.
 
+**CH026 found four real, previously-unreported bugs on its first real
+scan.** All four are the exact same shape: a class-level mutable default
+(`items = []`) mutated in place via `self.items.append(...)` (or
+subscript assignment) with no per-instance reassignment anywhere, so
+every instance of the class shares and corrupts the *same* object. In
+vllm's `AXK1ForCausalLM`, `self.packed_modules_mapping["qkv_proj"] =
+[...]` patches a routing table shared by every instance of the model
+class. In llama_index's `ZapierToolSpec`, `self.spec_functions.append(...)`
+means a second tool-spec instance (a different API key, a different
+user) inherits every action name the first instance ever registered. In
+optuna's CLI `_Studies` command, `self._study_list_header.append(...)`
+does the same to a table-header list. In HuggingFace transformers'
+`CodeGenTokenizer`, `self.model_input_names.append("token_type_ids")`
+means constructing one tokenizer with `return_token_type_ids=True`
+silently changes what field every *other* `CodeGenTokenizer` instance in
+the same process expects, regardless of how it was configured - exactly
+the "spooky action at a distance" class of bug this project exists to
+catch. None have PRs yet: vllm and transformers both require AI-assisted
+PRs to carry an explicit disclosure, which this project's own policy
+doesn't do, so those two are documented here rather than filed.
+
+**CH028 hit the exact same name-collision problem CH018/CH022 already
+had a guard for, because that guard didn't get reused.** The very first
+corpus scan came back with ~30 hits, almost all in agno - which doesn't
+use `threading.Timer` at all. `from agno.utils.timer import Timer` is
+agno's own unrelated stopwatch class, called as `Timer()` with zero
+arguments (real `threading.Timer` requires `interval` and `function` and
+would raise `TypeError` immediately). Fixed by requiring `from threading
+import Timer` before trusting a bare `Timer(...)` call - the same guard
+already built for CH022's `coroutine` minutes earlier in the same
+session, just not applied here the first time. Also missed CH009's
+`daemon=True` escape entirely (found in weaviate-python-client's
+watchdog timer, `_timeout_timer.daemon = True`, a deliberate
+"outlive the caller" choice) - added both a constructor-kwarg and a
+post-construction-assignment check for it, matching CH009 exactly. Real
+hits remain in marimo (a non-daemon browser-opening timer, never
+cancelled) and transformers (a chained, never-captured checkpoint-retry
+timer).
+
+**CH025 and CH027 each found one real bug in the first scan, and one
+real gap in the check.** CH025 (is-literal-comparison) flagged litellm's
+`if "usage" in response_obj is not None:` - but for the wrong reason.
+`ast.Compare` puts every operand and every op from a chained comparison
+in one node; checking "is there a literal anywhere" and "is there an
+`is`/`is not` anywhere" independently, without pairing each op with its
+own adjacent operands, matched the string literal (paired with `in`)
+against the wrong op (`is not`, actually comparing `response_obj` to the
+allowed singleton `None`). Fixed by walking the chain as adjacent
+`(left, op, right)` triples. CH027 (unwaited-subprocess) flagged dspy's
+`process = subprocess.Popen(...)`, followed by `lm.process = process` -
+a real hand-off to a different object, reaped later through a separate
+`terminate_process(lm.process)` call, the same "stored as any object's
+attribute" escape CH009/CH016/CH028 already needed. Added it.
+
 **Two checks we built and did not ship.** `exception-chaining` (`except X
 as e: raise Y(...)` with no `from e`, discarding the real traceback -
 overlaps flake8-bugbear B904) worked exactly as designed, but at a scale
@@ -308,12 +368,18 @@ codehound/
     ├── removed_getargspec.py   (CH019)
     ├── bare_except.py          (CH020)
     ├── removed_stdlib_module.py (CH021)
-    └── asyncio_coroutine_decorator.py (CH022)
+    ├── asyncio_coroutine_decorator.py (CH022)
+    ├── removed_stdlib_attribute.py (CH023)
+    ├── unittest_deprecated_alias.py (CH024)
+    ├── is_literal_comparison.py (CH025)
+    ├── mutable_class_attribute.py (CH026)
+    ├── unwaited_subprocess.py  (CH027)
+    └── floating_timer.py       (CH028)
 ```
 
 Each check receives a parsed `ast` tree plus the precomputed parent map and returns `Finding`s. Adding a rule is one file + one registry line + a test. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a full walkthrough of the engine, the parent map, and the design decisions.
 
-**False-positive discipline is a feature.** CH005 won't flag a handle that's `return`ed (the caller owns it) or explicitly `.close()`d. CH006 won't flag `TaskGroup.create_task` (the group holds the reference). CH001 only fires when the *enclosing* function is `async`. CH007 scopes `self.foo()` matches to async methods on the *same* class as the call site, and bare `foo()` matches to module-level async functions that aren't shadowed by a same-named parameter. CH009 doesn't flag a thread handed off as *any* object's attribute, not just `self`. CH010 only fires when a lambda is directly stored (appended, assigned, returned), not merely passed as a callback argument that gets consumed on the spot. CH016 doesn't flag a socket returned as part of a tuple/list, or passed as an argument to any call (as opposed to being the receiver of a call on itself) — real patterns found in vllm's rendezvous code. CH020 won't flag a `BaseException` handler whose bound name is actually referenced, or whose body re-raises anywhere in its own scope (not counting a nested try/except's own handler) — both real patterns found in agno. CH021 doesn't flag a relative import (`node.level != 0`) of a same-named local module, or an import already inside a `try:`/`except ImportError:` fallback — real patterns found in vllm and agno respectively. All of those guards exist because of real false positives caught while building the checks (see above and [`docs/FINDINGS.md`](docs/FINDINGS.md)). The test suite asserts both "bad code is flagged" and "correct code is not."
+**False-positive discipline is a feature.** CH005 won't flag a handle that's `return`ed (the caller owns it) or explicitly `.close()`d. CH006 won't flag `TaskGroup.create_task` (the group holds the reference). CH001 only fires when the *enclosing* function is `async`. CH007 scopes `self.foo()` matches to async methods on the *same* class as the call site, and bare `foo()` matches to module-level async functions that aren't shadowed by a same-named parameter. CH009 doesn't flag a thread handed off as *any* object's attribute, not just `self`. CH010 only fires when a lambda is directly stored (appended, assigned, returned), not merely passed as a callback argument that gets consumed on the spot. CH016 doesn't flag a socket returned as part of a tuple/list, or passed as an argument to any call (as opposed to being the receiver of a call on itself) — real patterns found in vllm's rendezvous code. CH020 won't flag a `BaseException` handler whose bound name is actually referenced, or whose body re-raises anywhere in its own scope (not counting a nested try/except's own handler) — both real patterns found in agno. CH021 doesn't flag a relative import (`node.level != 0`) of a same-named local module, or an import already inside a `try:`/`except ImportError:` fallback — real patterns found in vllm and agno respectively. CH025 pairs each chained comparison's op with only its own adjacent operands, rather than matching a literal and an `is`/`is not` anywhere in the same chain independently — a real pattern found in litellm. CH027 and CH028 both recognize a handle stored as *any* object's attribute as a hand-off, matching CH009/CH016's precedent — real patterns found in dspy and weaviate-python-client respectively. CH028 also only trusts a bare `Timer(...)` when `from threading import Timer` was actually seen — real hits in agno were its own unrelated stopwatch class. All of those guards exist because of real false positives caught while building the checks (see above and [`docs/FINDINGS.md`](docs/FINDINGS.md)). The test suite asserts both "bad code is flagged" and "correct code is not."
 
 ---
 
@@ -345,6 +411,9 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
       sockets, removed-in-3.9/3.10/3.11 stdlib APIs, bare `except:` — CH011-CH020
 - [x] 22 checks — removed stdlib modules (`distutils`, PEP 594 "dead
       batteries"), removed `@asyncio.coroutine` decorator — CH021-CH022
+- [x] 28 checks — removed stdlib functions, deprecated unittest aliases,
+      `is`-literal comparisons, mutable class attributes, unwaited
+      subprocesses, floating timers — CH023-CH028
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Sync HTTP clients constructed inside async request handlers
 - [ ] `--fix` for the mechanical rules (CH002, CH003, CH004)

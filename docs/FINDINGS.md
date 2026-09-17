@@ -1,11 +1,14 @@
 # Findings in the wild
 
-Eight of the twenty-two `codehound` rules were distilled from a bug found
-in a real, widely-used open-source project, with the fix submitted as a
-pull request. The rest (CH007-CH009, CH012-CH022) are hardening rules
-verified through real false positives against a ~29-framework validation
-corpus instead of a found-and-merged bug - see "Notes on precision" below
-for why, and what that absence itself says.
+Eight of the twenty-eight `codehound` rules were distilled from a bug
+found in a real, widely-used open-source project, with the fix submitted
+as a pull request. The rest (CH007-CH009, CH012-CH028) are hardening
+rules verified through real false positives against a ~29-framework
+validation corpus instead of a found-and-merged bug - see "Notes on
+precision" below for why, and what that absence itself says. CH026 is a
+partial exception: it found four real, previously-unreported bugs on its
+first scan, but none have a PR yet - see "Real bugs found, not yet
+filed" below.
 
 | Rule | Project | ⭐ | The bug | Fix |
 |------|---------|----|---------|-----|
@@ -224,9 +227,76 @@ the false positives a naive grep would have reported:
   skipping an import inside a `try:` body whose `except` catches
   `ImportError` or anything broader. A full corpus rescan after both
   fixes found zero remaining CH021 hits across all ~29 frameworks.
+- **CH025, a chained-comparison bug in the check itself** — the first
+  real hit was litellm's `if "usage" in response_obj is not None:`,
+  flagged as comparing a string literal with `is`. Wrong reason: `ast.
+  Compare` bundles every operand and every op of a chained comparison
+  into one node, and the initial implementation checked "does *any*
+  operand look like a literal" and "does *any* op look like Is/IsNot"
+  independently - true here, but the literal (`"usage"`) is the left
+  side of `in`, and the `is not` is actually comparing `response_obj`
+  against the allowed singleton `None`. Fixed by walking the chain as
+  adjacent `(left, op, right)` triples, so each op is only checked
+  against its own two operands.
+- **CH027 and CH028, the same missing escape found twice** — both
+  checks initially handled "returned" and "passed as an argument" but
+  not "stored as any object's attribute," the exact escape CH009/CH016
+  already needed. CH027's first real hit was dspy's `lm.process =
+  process` (the `Popen` handed to a different object, reaped later
+  through a separate `terminate_process(lm.process)` call). CH028's
+  daemon-escape gap (missing entirely, not just the attribute case) was
+  found the same way in weaviate-python-client's watchdog timer
+  (`_timeout_timer.daemon = True` after construction). Both fixed by
+  reusing the exact guards already proven for CH009/CH016.
+- **CH028, the name-collision guard that existed but wasn't reused** —
+  the first corpus scan came back with ~30 hits, almost entirely in
+  agno, which turned out not to use `threading.Timer` anywhere: `from
+  agno.utils.timer import Timer` is agno's own unrelated stopwatch
+  class, called as `Timer()` with zero arguments (real `threading.
+  Timer` requires `interval` and `function` and would raise `TypeError`
+  immediately). CH018 and CH022 had already solved this exact class of
+  problem - a bare name is only trusted when the real module actually
+  imported it - minutes earlier in the same session; CH028 just didn't
+  apply it the first time. Fixed by requiring `from threading import
+  Timer` before trusting a bare `Timer(...)` call.
 
 These are why the test suite asserts *both* directions: bad code flagged, good code
 left alone.
+
+## Real bugs found, not yet filed
+
+CH026 (`mutable-class-attribute`) found four real, previously-unreported
+bugs the first time it ran against the full corpus - all four the same
+shape: a class-level mutable default (`items = []`) mutated in place via
+`self.items.append(...)` or subscript assignment, with no per-instance
+reassignment anywhere in the class, so every instance shares and
+corrupts the same object.
+
+- **vllm's `AXK1ForCausalLM`**: `self.packed_modules_mapping["qkv_proj"]
+  = [...]` conditionally patches a routing table that's shared by every
+  instance of the model class, not just the one being configured.
+- **llama_index's `ZapierToolSpec`**: `self.spec_functions.append(action_name)`
+  means a second tool-spec instance - a different Zapier API key, a
+  different user - inherits every action name the *first* instance ever
+  registered, since it's still appending to the same list object.
+- **optuna's CLI `_Studies` command**: `self._study_list_header.append(("user_attrs", ""))`
+  does the same to a table-header list, lower severity since the CLI is
+  normally one-shot per process, but real if `_Studies` is ever
+  instantiated more than once in a long-running embedding of the CLI.
+- **HuggingFace transformers' `CodeGenTokenizer`**: `self.model_input_names.append("token_type_ids")`
+  means constructing one tokenizer with `return_token_type_ids=True`
+  silently changes what field every *other* `CodeGenTokenizer` instance
+  in the same process expects, regardless of its own configuration -
+  exactly the "spooky action at a distance" class of bug this project
+  exists to catch.
+
+None of these have a PR yet. llama_index and optuna are candidates the
+same way CH001/CH002/CH006/CH010/CH011's finds were. vllm and
+transformers both require, in their own contribution policy, that an
+AI-assisted PR carry an explicit disclosure of AI assistance - something
+this project's own standing policy (no AI authorship traces in anything
+shipped) doesn't do, so those two are recorded here rather than filed
+until that's resolved one way or the other.
 
 ## Bugs the tool found on its own
 
