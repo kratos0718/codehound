@@ -290,13 +290,48 @@ corrupts the same object.
   exactly the "spooky action at a distance" class of bug this project
   exists to catch.
 
-None of these have a PR yet. llama_index and optuna are candidates the
-same way CH001/CH002/CH006/CH010/CH011's finds were. vllm and
-transformers both require, in their own contribution policy, that an
-AI-assisted PR carry an explicit disclosure of AI assistance - something
-this project's own standing policy (no AI authorship traces in anything
-shipped) doesn't do, so those two are recorded here rather than filed
-until that's resolved one way or the other.
+llama_index's fix shipped as PR [run-llama/llama_index#23102](https://github.com/run-llama/llama_index/pull/23102)
+(open). optuna's fix is committed and pushed to a fork branch, but PR
+creation itself is currently blocked by GitHub (a 404/permission error,
+not a rate limit - likely a one-open-PR-per-external-contributor policy,
+since [optuna/optuna#6859](https://github.com/optuna/optuna/pull/6859)
+from the CH011 batch is still open). vllm and transformers both require,
+in their own contribution policy, that an AI-assisted PR carry an
+explicit disclosure of AI assistance - something this project's own
+standing policy (no AI authorship traces in anything shipped) doesn't
+do, so those two are recorded here rather than filed until that's
+resolved one way or the other.
+
+Two more real bugs found the same way, in different checks:
+
+- **CH013 (`discarded-future`) in langchain's `_run_batch_evaluators`**:
+  `executor.submit(self.client.create_feedback, ...)` sits inside a
+  `try:/except Exception: logger.exception(...)` block that looks like
+  it already handles errors - but that `except` only ever sees
+  exceptions from the *synchronous* code in the loop (running the
+  evaluator, building the result dict). `create_feedback` actually runs
+  later, on the executor's worker thread; if it raises, the exception is
+  stored on the discarded `Future` and never reaches that `except` at
+  all. Not filed: langchain's own `CLAUDE.md` requires "a brief
+  disclaimer noting AI-agent involvement" in PR descriptions, the same
+  conflict as vllm/transformers.
+- **CH014 (`unprotected-lock-acquire`) in torchtune's
+  `VLLMParameterServer._sync_weights_with_worker`**: `read_lock.acquire()`,
+  several `torch.distributed`/NCCL broadcast calls and a
+  `torch.cuda.synchronize()`, then `read_lock.release()` - no
+  `try`/`finally` in between. Any exception during the broadcasts (a
+  CUDA error, a shape mismatch, a network failure mid-sync) leaves the
+  lock held forever; since this guards weight synchronization in an RL
+  training loop, a stuck read lock deadlocks every future write-side
+  weight update. The fix is a straightforward `with
+  self.state_dict_lock.gen_rlock():` (the `readerwriterlock` library's
+  lock objects support the context-manager protocol, used identically
+  elsewhere in the same class), but this specific method is only
+  exercised by the repo's own `@gpu_test`/`@rl_test`-marked integration
+  tests, which need real GPUs, Ray, and vLLM to run - nothing this
+  session's environment could exercise. Not filed, since the discipline
+  this whole project holds itself to is verifying a fix before shipping
+  it, not just reasoning that it's obviously correct.
 
 ## Bugs the tool found on its own
 
