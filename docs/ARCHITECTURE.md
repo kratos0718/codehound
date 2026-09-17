@@ -56,11 +56,13 @@ src/codehound/
 │   ├── collections_abc_import.py CH017
 │   ├── removed_asyncio_task_methods.py CH018
 │   ├── removed_getargspec.py   CH019
-│   └── bare_except.py          CH020
+│   ├── bare_except.py          CH020
+│   ├── removed_stdlib_module.py CH021
+│   └── asyncio_coroutine_decorator.py CH022
 └── __init__.py      # public API surface + __version__
 ```
 
-~2,200 lines of source, zero runtime dependencies (standard-library `ast` only).
+~2,600 lines of source, zero runtime dependencies (standard-library `ast` only).
 
 ## The core contract
 
@@ -116,7 +118,7 @@ Three shared predicates are built on top of it:
 3. `scan_path` aggregates and sorts findings by `(path, line, col, code)` so
    output is deterministic — important for diffing in CI.
 
-## The twenty checks
+## The twenty-two checks
 
 | Code | Detects | Key structural test |
 |------|---------|--------------------|
@@ -140,6 +142,8 @@ Three shared predicates are built on top of it:
 | CH018 | `asyncio.Task.current_task()` / `.all_tasks()` | attribute call on `Task`, only trusted when `Task` was imported via `from asyncio import Task` |
 | CH019 | `inspect.getargspec(...)` | attribute call/import resolves to `inspect.getargspec` |
 | CH020 | bare `except:` / unused `except BaseException:` | handler type is `None` or `Name("BaseException")`, bound name (if any) not referenced, and no `raise` anywhere in the handler's own scope |
+| CH021 | `import`/`from` of a removed stdlib module (`distutils`, PEP 594 modules) | import's top-level module name is in a curated removed-module set, `ImportFrom.level == 0` (absolute), not inside a `try:` body with an `ImportError`-or-broader handler |
+| CH022 | `@asyncio.coroutine` decorator | decorator resolves to `asyncio.coroutine`, or bare `coroutine` only when `from asyncio import coroutine` was seen in the file |
 
 Each lives in its own file with a module docstring explaining the bug and a
 real-world example of where it was found.
@@ -200,6 +204,14 @@ suppressions exist specifically to avoid noise:
   connect, then bare-`raise`s to propagate the original error). Both were
   real false positives found by checking actual corpus hits, not just
   reasoning about the shape.
+- **CH021** checks `ImportFrom.level == 0` before trusting a module name -
+  a relative `from .chunk import x` has `node.module == "chunk"` too,
+  indistinguishable from the real stdlib module by name alone (real,
+  found in vllm's own local `chunk.py` sibling module). It also skips an
+  import inside a `try:` body whose `except` catches `ImportError` or
+  anything broader (real, found in agno's `try: import imghdr except
+  ImportError: import filetype`) - a deliberate fallback already
+  anticipates the exact removal being flagged.
 
 The test suite asserts **both directions** for every rule: the bad pattern *is*
 flagged, and the idiomatic fix is *not*.

@@ -1,11 +1,11 @@
 # Findings in the wild
 
-Eight of the twenty `codehound` rules were distilled from a bug found in a
-real, widely-used open-source project, with the fix submitted as a pull
-request. The rest (CH007-CH009, CH012-CH020) are hardening rules verified
-through real false positives against a ~20-framework validation corpus
-instead of a found-and-merged bug - see "Notes on precision" below for
-why, and what that absence itself says.
+Eight of the twenty-two `codehound` rules were distilled from a bug found
+in a real, widely-used open-source project, with the fix submitted as a
+pull request. The rest (CH007-CH009, CH012-CH022) are hardening rules
+verified through real false positives against a ~29-framework validation
+corpus instead of a found-and-merged bug - see "Notes on precision" below
+for why, and what that absence itself says.
 
 | Rule | Project | ⭐ | The bug | Fix |
 |------|---------|----|---------|-----|
@@ -22,6 +22,7 @@ why, and what that absence itself says.
 | CH010 `loop-closure-capture` | accelerate (HuggingFace) | 9k+ | **Found by codehound itself:** `MegatronEngine.get_module_config`'s `param_sync_func` list builds one callback per distributed-training model chunk, but every lambda captures `model_index` by reference - whichever chunk's callback fires, it reports the *last* chunk's index to `finish_param_sync`, not its own | PR [huggingface/accelerate#4273](https://github.com/huggingface/accelerate/pull/4273) (open) — `model_index=model_index` default-arg capture; isolated regression test (the real method needs the optional `megatron-core` package, not available in CI) verified to fail pre-fix (all callbacks report index 2) and pass post-fix |
 | CH011 `lru-cache-on-method` | optuna | 12k+ | **Found by codehound itself:** `_FanovaTree`'s seven node-lookup methods are `@lru_cache(maxsize=None)` directly on the class - every tree built for a `get_param_importances()` call (one per random-forest estimator) stays reachable through the cache for the life of the process instead of being freed once the importances are computed | PR [optuna/optuna#6859](https://github.com/optuna/optuna/pull/6859) (open) — moved the caching to per-instance by wrapping the bound methods in `__init__`; regression test constructs a tree, drops the only reference, and asserts it's collected - verified to fail pre-fix and pass post-fix |
 | CH011 `lru-cache-on-method` | llama_index | 40k+ | **Found by codehound itself:** `VectaraIndex._get_corpus_key` is `@lru_cache(maxsize=None)` on the class - every index that calls it (insert/query/delete/update all do) leaks forever, which also means `VectaraIndex.__del__` (written specifically to close `self._session`) never runs, so the HTTP session leaks too | PR [run-llama/llama_index#23089](https://github.com/run-llama/llama_index/pull/23089) (open) — same per-instance-caching fix; regression test constructs an index with dummy credentials, calls the cached method, drops the reference, and asserts collection - verified to fail pre-fix and pass post-fix |
+| CH011 `lru-cache-on-method` | litellm | 30k+ | **Found by codehound itself:** `Router._cached_get_model_group_info` is `@lru_cache` on the class - every `Router` that's served a request through it (`set_response_headers` calls it on every one) leaks forever. Proved this is a real, independent bug and not a "you forgot to clean up" issue: the leak survives even after correctly calling `Router.discard()`, the class's own documented cleanup method | PR [BerriAI/litellm#41582](https://github.com/BerriAI/litellm/pull/41582) (open) — same per-instance-caching fix, matching a sibling method (`cached_deployment_model_info`) that already used the correct pattern; regression test constructs a Router, calls the cached method, calls `discard()`, drops the reference, and asserts collection - verified to fail pre-fix and pass post-fix; as a side effect also fixes `cache_clear()` bleeding across every Router in the process instead of just the one being invalidated |
 
 ## Notes on precision
 
@@ -176,6 +177,22 @@ the false positives a naive grep would have reported:
   rescan (only dspy's hit disappeared; the other 8 corpus repos' CH011
   hits are unaffected, confirming the guard doesn't over-suppress mutable
   classes).
+- **CH011 (litellm), a red herring worth recording** — before trusting
+  litellm's `Router` hit, checked whether `Router` was a singleton like
+  mlflow's registry (it isn't: the proxy reassigns the global `llm_router`
+  via `global` in about ten places, a real hot-reload path). Constructing
+  a `Router` and dropping every reference to it still didn't collect it
+  even with the CH011 fix applied - `gc.get_referrers` showed it was also
+  held by bound-method callbacks appended into global `litellm.
+  success_callback`/`failure_callback` lists. That turned out to be a
+  *different*, already-known issue with its own documented fix:
+  `Router.discard()`, a "pseudo-destructor" that exists specifically to
+  unhook those callbacks. Confirmed the two were genuinely independent by
+  testing all four combinations: without `discard()` the Router leaks
+  regardless of the CH011 fix (expected, `discard()` is required either
+  way); with `discard()` called, the unfixed code still leaks and the
+  fixed code doesn't. That's what makes the CH011 fix real rather than
+  redundant with calling `discard()`.
 - **CH016 (vllm), found and fixed the day it shipped** — the very first
   real-corpus scan of the brand new `unclosed-socket` check turned up
   three hits in vllm's distributed process-group rendezvous code, and all
@@ -194,6 +211,19 @@ the false positives a naive grep would have reported:
   full corpus rescan afterward found zero remaining CH016 hits across all
   ~29 frameworks, a real result rather than a gap (sockets not handed off
   this way and never closed appear to be genuinely rare here).
+- **CH021, two false positives found minutes apart** — the first
+  real-corpus scan found vllm's `from .chunk import chunk_gated_delta_rule`
+  flagged as a removed-stdlib-module import. It's a relative import of
+  vllm's own local `chunk.py` sibling file, not the removed stdlib
+  `chunk` module - `ast.ImportFrom.module` is `"chunk"` either way, and
+  only the separate `level` field (the leading-dot count) distinguishes
+  them. Fixed by requiring `level == 0`, rescanned, and immediately found
+  a second one in agno: `try: import imghdr except ImportError: import
+  filetype`, a real, deliberate fallback that already anticipates the
+  exact removal being flagged, not a bug waiting to happen. Fixed by
+  skipping an import inside a `try:` body whose `except` catches
+  `ImportError` or anything broader. A full corpus rescan after both
+  fixes found zero remaining CH021 hits across all ~29 frameworks.
 
 These are why the test suite asserts *both* directions: bad code flagged, good code
 left alone.
@@ -214,15 +244,19 @@ kind of thing that would silently corrupt which model chunk's gradients get
 synced, in a library used across the entire PyTorch training ecosystem. Not
 a bug I was looking for; the scan found it.
 
-CH011 did it twice in one afternoon, in two unrelated projects, once the
-20-check corpus scan was used to hunt down real PR candidates rather than
-just to sanity-check precision. In optuna, `_FanovaTree`'s node-lookup
-methods leaked every random-forest tree ever built for a feature-importance
+CH011 did it three times, in three unrelated projects, once the 20-check
+corpus scan was used to hunt down real PR candidates rather than just to
+sanity-check precision. In optuna, `_FanovaTree`'s node-lookup methods
+leaked every random-forest tree ever built for a feature-importance
 computation. In llama_index, `VectaraIndex._get_corpus_key` did the same
 thing to the index itself - and because the class's own `__del__` exists
 specifically to close its HTTP session on garbage collection, the leak also
 silently broke that cleanup path, so the bug compounded into a second one
-nobody had connected to the first. Both fixed the same way (move the
-`lru_cache` from class scope to a per-instance wrapper built in `__init__`),
-both verified with a regression test that fails pre-fix and passes post-fix,
-both opened as PRs the same day the check itself shipped.
+nobody had connected to the first. In litellm, `Router._cached_get_model_group_info`
+leaked every `Router` that ever served a request, and survived even a
+correctly-called `discard()` - the class's own documented cleanup method -
+proving it was a real, independent bug rather than "the user forgot to
+clean up." All three fixed the same way (move the `lru_cache` from class
+scope to a per-instance wrapper built in `__init__`), all verified with a
+regression test that fails pre-fix and passes post-fix, all opened as PRs
+the same day the check itself shipped.

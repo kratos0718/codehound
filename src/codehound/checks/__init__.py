@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from codehound.checks.async_property import AsyncProperty
+from codehound.checks.asyncio_coroutine_decorator import AsyncioCoroutineDecorator
 from codehound.checks.asyncio_run_in_loop import AsyncioRunInRunningLoop
 from codehound.checks.bare_except import BareExcept
 from codehound.checks.blocking_async import BlockingCallInAsync
@@ -18,6 +19,7 @@ from codehound.checks.lru_cache_on_method import LruCacheOnMethod
 from codehound.checks.mutable_defaults import MutableDefaultArgument
 from codehound.checks.removed_asyncio_task_methods import RemovedAsyncioTaskMethods
 from codehound.checks.removed_getargspec import RemovedGetargspec
+from codehound.checks.removed_stdlib_module import RemovedStdlibModule
 from codehound.checks.resource_leak import UnclosedFileHandle
 from codehound.checks.unawaited_coroutine import UnawaitedCoroutineCall
 from codehound.checks.unclosed_socket import UnclosedSocket
@@ -45,6 +47,8 @@ ALL_CHECKS: list[type[Check]] = [
     RemovedAsyncioTaskMethods,
     RemovedGetargspec,
     BareExcept,
+    RemovedStdlibModule,
+    AsyncioCoroutineDecorator,
 ]
 
 

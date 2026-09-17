@@ -4,7 +4,7 @@
 
 <h1 align="center">codehound</h1>
 
-**An AST-based static analyzer that hunts *real* bugs in large Python codebases — twenty checks, seven backed by a bug that was actually found and merged into a major open-source AI framework, the rest hardening rules verified against real false positives across a ~20-framework validation corpus instead of just reasoned about.**
+**An AST-based static analyzer that hunts *real* bugs in large Python codebases — twenty-two checks, eight backed by a bug that was actually found and merged (or opened as a PR) into a major open-source AI framework, the rest hardening rules verified against real false positives across a ~29-framework validation corpus instead of just reasoned about.**
 
 [![CI](https://github.com/kratos0718/codehound/actions/workflows/ci.yml/badge.svg)](https://github.com/kratos0718/codehound/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/codehound.svg)](https://pypi.org/project/codehound/)
@@ -51,7 +51,7 @@ I was contributing bug fixes to large AI frameworks and noticed the same handful
 pip install codehound
 ```
 
-Zero dependencies — it's ~2,200 lines on top of the standard-library `ast` module, so this installs instantly and runs fully offline, no API key or network call involved.
+Zero dependencies — it's ~2,600 lines on top of the standard-library `ast` module, so this installs instantly and runs fully offline, no API key or network call involved.
 
 <details>
 <summary>From a clone instead (for development)</summary>
@@ -112,7 +112,7 @@ Uploads findings to the repo's **Security → Code Scanning** tab via SARIF, in 
 ```yaml
 repos:
   - repo: https://github.com/kratos0718/codehound
-    rev: v1.4.2
+    rev: v1.5.0
     hooks:
       - id: codehound
 ```
@@ -133,7 +133,7 @@ repos:
 | **CH008** | `asyncio-run-in-running-loop` | `asyncio.run(...)` called from inside an `async def` — always raises `RuntimeError`, immediately, every time. | hardening rule — zero corpus hits (see below) |
 | **CH009** | `floating-thread` | A non-daemon `threading.Thread` that's `.start()`ed but never `.join()`ed — the thread analog of CH006. | hardening rule — see below |
 | **CH010** | `loop-closure-capture` | A `lambda` inside a `for` loop (or comprehension) that's *stored* (appended, assigned, returned) and captures the loop variable by reference — every stored instance ends up sharing the loop's **final** value. | **accelerate** (HuggingFace) — `MegatronEngine.get_module_config`'s `param_sync_func` list, PR #4273 |
-| **CH011** | `lru-cache-on-method` | `@lru_cache`/`@cache` decorating an instance method — the cache holds a strong reference to `self` forever, so every instance that ever calls the method leaks for the process lifetime. | **optuna** — `_FanovaTree`'s node-lookup methods leaked every tree built for a `get_param_importances()` call; **llama_index** — `VectaraIndex._get_corpus_key` leaked the index *and* broke its own `__del__`-based HTTP session cleanup |
+| **CH011** | `lru-cache-on-method` | `@lru_cache`/`@cache` decorating an instance method — the cache holds a strong reference to `self` forever, so every instance that ever calls the method leaks for the process lifetime. | **optuna** — `_FanovaTree`'s node-lookup methods leaked every tree built for a `get_param_importances()` call; **llama_index** — `VectaraIndex._get_corpus_key` leaked the index *and* broke its own `__del__`-based HTTP session cleanup; **litellm** — `Router._cached_get_model_group_info` leaked every `Router` even after its own documented `discard()` cleanup |
 | **CH012** | `floating-process` | A non-daemon `multiprocessing.Process` that's `.start()`ed but never `.join()`ed — the process analog of CH009. | hardening rule |
 | **CH013** | `discarded-future` | `ThreadPoolExecutor`/`ProcessPoolExecutor.submit(...)` called as a bare statement — the returned `Future` (and any exception raised inside the submitted work) is silently discarded. | hardening rule — real hits in litellm, accelerate, langchain |
 | **CH014** | `unprotected-lock-acquire` | `lock.acquire()` outside a `with`, whose matching `.release()` isn't inside a `finally:` — an exception between acquire and release deadlocks every future caller of that lock. | hardening rule — real hits in vllm, accelerate, torchtune |
@@ -143,10 +143,12 @@ repos:
 | **CH018** | `removed-asyncio-task-methods` | `asyncio.Task.current_task()` / `.all_tasks()` — both removed in Python 3.9; use `asyncio.current_task()` / `asyncio.all_tasks()`. | hardening rule |
 | **CH019** | `removed-getargspec` | `inspect.getargspec(...)` — removed in Python 3.11 after a decade-plus deprecation; use `inspect.signature(...)`. | hardening rule |
 | **CH020** | `bare-except` | A bare `except:` (or unused `except BaseException:`) — also catches `KeyboardInterrupt`/`SystemExit`, so Ctrl-C stops working and `sys.exit()` gets silently absorbed. | hardening rule — real hits in agno, llama_index, marimo, litellm |
+| **CH021** | `removed-stdlib-module` | `import distutils` (removed 3.12) or any of the 19 PEP 594 "dead battery" modules (`cgi`, `imghdr`, `telnetlib`, `nntplib`, …, removed 3.13) — `ImportError` the moment the module loads. | hardening rule — real hit in agno (already guarded, see below) |
+| **CH022** | `removed-asyncio-coroutine-decorator` | `@asyncio.coroutine` — removed in Python 3.11 after a generator-based-coroutine bridge that predates `async def`; `AttributeError` the moment the decorator line runs. | hardening rule |
 
 `codehound list` prints this from the source of truth.
 
-CH007-CH020 don't have found-and-merged bugs behind all of them the way
+CH007-CH022 don't have found-and-merged bugs behind all of them the way
 CH001-CH006 do - most are hardening rules for well-known Python
 correctness gotchas rather than something this project personally
 tracked down first. CH010 and CH011 are the exceptions: both found
@@ -190,20 +192,28 @@ it's very unlikely to survive basic testing; CH007 and CH009 both only
 match same-file names by design, and most real cases of either are
 plausibly cross-module.
 
-**The optuna and llama_index finds (CH011):** both are `@lru_cache(maxsize=
-None)` decorating an instance method - a strong reference to `self`
-retained forever. In optuna, `_FanovaTree`'s node-lookup methods leak
-every tree built for a `get_param_importances()` call (one per
-random-forest estimator). In llama_index, `VectaraIndex._get_corpus_key`
-leaks the index itself - and since `VectaraIndex.__del__` exists
-specifically to close the index's `requests.Session` on garbage
-collection, the leak silently disables that cleanup too, so an HTTP
-session leaks along with every index. Both fixed the same way: move the
-cache from a class-level decorator to a per-instance one built in
-`__init__`, so it's freed with the instance instead of outliving it. Both
-have a regression test verified to fail pre-fix and pass post-fix.
+**The optuna, llama_index, and litellm finds (CH011):** all three are
+`@lru_cache(maxsize=None)` (or a fixed `maxsize`) decorating an instance
+method - a strong reference to `self` retained for the life of the
+process. In optuna, `_FanovaTree`'s node-lookup methods leak every tree
+built for a `get_param_importances()` call (one per random-forest
+estimator). In llama_index, `VectaraIndex._get_corpus_key` leaks the
+index itself - and since `VectaraIndex.__del__` exists specifically to
+close the index's `requests.Session` on garbage collection, the leak
+silently disables that cleanup too, so an HTTP session leaks along with
+every index. In litellm, `Router._cached_get_model_group_info` leaks
+every `Router` that's ever served a request through it - proved this
+survives even a correctly-called `router.discard()` (Router's own
+documented cleanup method), so it isn't a "you forgot to clean up" bug.
+All three fixed the same way: move the cache from a class-level decorator
+to a per-instance one built in `__init__`, so it's freed with the
+instance instead of outliving it - the exact pattern litellm's own
+`cached_deployment_model_info` sibling method already used, just not yet
+applied to this one. Each has a regression test verified to fail pre-fix
+and pass post-fix.
 PRs: [optuna/optuna#6859](https://github.com/optuna/optuna/pull/6859),
-[run-llama/llama_index#23089](https://github.com/run-llama/llama_index/pull/23089).
+[run-llama/llama_index#23089](https://github.com/run-llama/llama_index/pull/23089),
+[BerriAI/litellm#41582](https://github.com/BerriAI/litellm/pull/41582).
 
 **A third CH011 shape needed a guard instead of a PR:** dspy's `Image` (a
 pydantic model) caches `format()` the same way, but `Image` is frozen
@@ -226,6 +236,20 @@ way nearly as often as rendezvous sockets are. Fixed by treating a name
 as escaped when it's returned as part of a tuple/list or passed as an
 argument to any call. A full corpus rescan afterward found zero remaining
 CH016 hits.
+
+**CH021 did the same thing twice, minutes apart.** The first real-corpus
+scan found a false positive in vllm - `from .chunk import
+chunk_gated_delta_rule`, a relative import of vllm's own local `chunk.py`
+sibling module, not the removed stdlib `chunk`. `ast.ImportFrom.module`
+is `"chunk"` either way; only `node.level` (the leading-dot count) tells
+a relative import apart from an absolute one, and the check wasn't
+checking it. Fixed, rescanned, and found a *second* false positive in
+agno: `try: import imghdr except ImportError: import filetype` - a
+real, deliberate fallback that already anticipates this exact removal,
+not a bug waiting to happen. Added a second guard: skip an import inside
+a `try:` body whose `except` catches `ImportError` (or anything
+broader). A full corpus rescan after both fixes found zero remaining
+CH021 hits.
 
 **Two checks we built and did not ship.** `exception-chaining` (`except X
 as e: raise Y(...)` with no `from e`, discarding the real traceback -
@@ -282,12 +306,14 @@ codehound/
     ├── collections_abc_import.py (CH017)
     ├── removed_asyncio_task_methods.py (CH018)
     ├── removed_getargspec.py   (CH019)
-    └── bare_except.py          (CH020)
+    ├── bare_except.py          (CH020)
+    ├── removed_stdlib_module.py (CH021)
+    └── asyncio_coroutine_decorator.py (CH022)
 ```
 
 Each check receives a parsed `ast` tree plus the precomputed parent map and returns `Finding`s. Adding a rule is one file + one registry line + a test. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a full walkthrough of the engine, the parent map, and the design decisions.
 
-**False-positive discipline is a feature.** CH005 won't flag a handle that's `return`ed (the caller owns it) or explicitly `.close()`d. CH006 won't flag `TaskGroup.create_task` (the group holds the reference). CH001 only fires when the *enclosing* function is `async`. CH007 scopes `self.foo()` matches to async methods on the *same* class as the call site, and bare `foo()` matches to module-level async functions that aren't shadowed by a same-named parameter. CH009 doesn't flag a thread handed off as *any* object's attribute, not just `self`. CH010 only fires when a lambda is directly stored (appended, assigned, returned), not merely passed as a callback argument that gets consumed on the spot. CH016 doesn't flag a socket returned as part of a tuple/list, or passed as an argument to any call (as opposed to being the receiver of a call on itself) — real patterns found in vllm's rendezvous code. CH020 won't flag a `BaseException` handler whose bound name is actually referenced, or whose body re-raises anywhere in its own scope (not counting a nested try/except's own handler) — both real patterns found in agno. All of those guards exist because of real false positives caught while building the checks (see above and [`docs/FINDINGS.md`](docs/FINDINGS.md)). The test suite asserts both "bad code is flagged" and "correct code is not."
+**False-positive discipline is a feature.** CH005 won't flag a handle that's `return`ed (the caller owns it) or explicitly `.close()`d. CH006 won't flag `TaskGroup.create_task` (the group holds the reference). CH001 only fires when the *enclosing* function is `async`. CH007 scopes `self.foo()` matches to async methods on the *same* class as the call site, and bare `foo()` matches to module-level async functions that aren't shadowed by a same-named parameter. CH009 doesn't flag a thread handed off as *any* object's attribute, not just `self`. CH010 only fires when a lambda is directly stored (appended, assigned, returned), not merely passed as a callback argument that gets consumed on the spot. CH016 doesn't flag a socket returned as part of a tuple/list, or passed as an argument to any call (as opposed to being the receiver of a call on itself) — real patterns found in vllm's rendezvous code. CH020 won't flag a `BaseException` handler whose bound name is actually referenced, or whose body re-raises anywhere in its own scope (not counting a nested try/except's own handler) — both real patterns found in agno. CH021 doesn't flag a relative import (`node.level != 0`) of a same-named local module, or an import already inside a `try:`/`except ImportError:` fallback — real patterns found in vllm and agno respectively. All of those guards exist because of real false positives caught while building the checks (see above and [`docs/FINDINGS.md`](docs/FINDINGS.md)). The test suite asserts both "bad code is flagged" and "correct code is not."
 
 ---
 
@@ -317,6 +343,8 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
 - [x] 20 checks — memory leaks (`lru_cache` on methods), floating processes,
       discarded futures, unprotected locks, async properties, unclosed
       sockets, removed-in-3.9/3.10/3.11 stdlib APIs, bare `except:` — CH011-CH020
+- [x] 22 checks — removed stdlib modules (`distutils`, PEP 594 "dead
+      batteries"), removed `@asyncio.coroutine` decorator — CH021-CH022
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Sync HTTP clients constructed inside async request handlers
 - [ ] `--fix` for the mechanical rules (CH002, CH003, CH004)

@@ -1043,3 +1043,111 @@ def test_ch020_flags_base_exception_with_raise_only_in_nested_handler():
     )
     assert len(_run(code, ["CH020"])) == 1
 
+
+# --- CH021 removed-stdlib-module ------------------------------------------------------
+
+
+def test_ch021_flags_distutils_import():
+    findings = _run("import distutils\n", ["CH021"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH021"
+
+
+def test_ch021_flags_distutils_submodule_import():
+    findings = _run("import distutils.core\n", ["CH021"])
+    assert len(findings) == 1
+
+
+def test_ch021_flags_distutils_from_import():
+    code = "from distutils.core import setup\n"
+    findings = _run(code, ["CH021"])
+    assert len(findings) == 1
+
+
+def test_ch021_flags_pep594_dead_battery_modules():
+    for mod in ["cgi", "imghdr", "telnetlib", "nntplib", "asynchat", "asyncore", "imp"]:
+        findings = _run(f"import {mod}\n", ["CH021"])
+        assert len(findings) == 1, f"expected {mod} to be flagged"
+
+
+def test_ch021_ignores_unrelated_modules():
+    code = "import os\nimport sys\nfrom collections import OrderedDict\n"
+    assert _run(code, ["CH021"]) == []
+
+
+def test_ch021_ignores_similarly_named_local_module():
+    # A module named e.g. `imp` in the removed set shouldn't false-positive
+    # on an unrelated attribute/name access - only actual import statements.
+    code = "imp = 5\nprint(imp)\n"
+    assert _run(code, ["CH021"]) == []
+
+
+def test_ch021_ignores_relative_import_of_same_named_local_module():
+    # Real false positive found in vllm: `from .chunk import
+    # chunk_gated_delta_rule` imports a local sibling module named
+    # chunk.py, not the removed stdlib `chunk` module - `node.module` is
+    # "chunk" either way, so only `node.level == 0` (absolute) tells them
+    # apart.
+    code = "from .chunk import chunk_gated_delta_rule\n"
+    assert _run(code, ["CH021"]) == []
+
+
+def test_ch021_ignores_import_guarded_by_import_error_handler():
+    # Real false positive found in agno: `try: import imghdr except
+    # ImportError: import filetype` explicitly anticipates and falls back
+    # from the removal - already handled, not a bug waiting to happen.
+    code = "try:\n    import imghdr\nexcept ImportError:\n    import filetype\n"
+    assert _run(code, ["CH021"]) == []
+
+
+def test_ch021_ignores_from_import_guarded_by_broad_except():
+    code = "try:\n    from distutils.core import setup\nexcept Exception:\n    setup = None\n"
+    assert _run(code, ["CH021"]) == []
+
+
+def test_ch021_still_flags_import_in_try_with_unrelated_handler():
+    # A try/except that doesn't actually catch ImportError provides no
+    # real protection, so this must still be flagged.
+    code = "try:\n    import distutils\nexcept ValueError:\n    pass\n"
+    findings = _run(code, ["CH021"])
+    assert len(findings) == 1
+
+
+def test_ch021_still_flags_import_outside_any_try():
+    code = "import distutils\ntry:\n    risky()\nexcept ImportError:\n    pass\n"
+    findings = _run(code, ["CH021"])
+    assert len(findings) == 1
+
+
+# --- CH022 removed-asyncio-coroutine-decorator -----------------------------------------
+
+
+def test_ch022_flags_asyncio_coroutine_decorator():
+    code = "import asyncio\n@asyncio.coroutine\ndef f():\n    yield from g()\n"
+    findings = _run(code, ["CH022"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH022"
+
+
+def test_ch022_flags_bare_coroutine_when_imported_from_asyncio():
+    code = "from asyncio import coroutine\n@coroutine\ndef f():\n    yield from g()\n"
+    findings = _run(code, ["CH022"])
+    assert len(findings) == 1
+
+
+def test_ch022_ignores_bare_coroutine_not_imported_from_asyncio():
+    # Real name-collision guard, same shape as CH018's for `Task`: a
+    # same-named decorator from somewhere else shouldn't be misidentified.
+    code = "from mylib import coroutine\n@coroutine\ndef f():\n    return 1\n"
+    assert _run(code, ["CH022"]) == []
+
+
+def test_ch022_ignores_async_def_without_decorator():
+    code = "async def f():\n    return 1\n"
+    assert _run(code, ["CH022"]) == []
+
+
+def test_ch022_ignores_unrelated_attribute_named_coroutine():
+    code = "import asyncio\n@other.coroutine\ndef f():\n    return 1\n"
+    assert _run(code, ["CH022"]) == []
+
