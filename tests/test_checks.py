@@ -724,6 +724,72 @@ def test_ch016_ignores_returned_socket():
     assert _run(code, ["CH016"]) == []
 
 
+def test_ch016_ignores_socket_returned_inside_a_tuple():
+    # Real false positive found in vllm's distributed process-group setup:
+    # `return port, s` hands the socket off to the caller just as much as a
+    # bare `return s` does - it's just wrapped in a tuple alongside other data.
+    code = (
+        "import socket\n"
+        "def bind():\n"
+        "    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "    s.bind(('localhost', 0))\n"
+        "    port = s.getsockname()[1]\n"
+        "    return port, s\n"
+    )
+    assert _run(code, ["CH016"]) == []
+
+
+def test_ch016_ignores_socket_appended_to_a_returned_list():
+    # Real false positive found in vllm: sockets are collected into a list
+    # inside a loop, and the list itself (not any individual socket name) is
+    # returned - `socks.append(s)` is the hand-off.
+    code = (
+        "import socket\n"
+        "def bind_group():\n"
+        "    socks = []\n"
+        "    for _ in range(3):\n"
+        "        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "        s.bind(('localhost', 0))\n"
+        "        socks.append(s)\n"
+        "    return socks\n"
+    )
+    assert _run(code, ["CH016"]) == []
+
+
+def test_ch016_ignores_socket_passed_as_call_argument():
+    # Real false positive found in vllm: a listen socket is built, then
+    # handed straight into another function that takes ownership of it
+    # (`create_tcp_store(..., listen_socket=listen_socket)`), never returned
+    # and never closed in this function because the callee owns it now.
+    code = (
+        "import socket\n"
+        "def setup(host, port):\n"
+        "    listen_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "    listen_socket.bind((host, port))\n"
+        "    listen_socket.listen()\n"
+        "    store = create_tcp_store(host, port, listen_socket=listen_socket)\n"
+        "    return store\n"
+    )
+    assert _run(code, ["CH016"]) == []
+
+
+def test_ch016_still_flags_socket_used_only_as_a_call_receiver():
+    # Guard against the passed-as-argument escape swallowing real bugs:
+    # `s.connect(...)`/`s.recv(...)` use `s` as the receiver of the call, not
+    # as an argument, so this must still be flagged.
+    code = (
+        "import socket\n"
+        "def f():\n"
+        "    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "    s.connect(('localhost', 80))\n"
+        "    data = s.recv(1024)\n"
+        "    print(data)\n"
+    )
+    findings = _run(code, ["CH016"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH016"
+
+
 # --- CH017 collections-abc-import ----------------------------------------------------
 
 

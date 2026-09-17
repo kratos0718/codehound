@@ -135,7 +135,7 @@ Three shared predicates are built on top of it:
 | CH013 | discarded `Executor.submit(...)` result | bare `Expr` wrapping `.submit(...)` on a name tracked back to a `ThreadPoolExecutor`/`ProcessPoolExecutor` construction |
 | CH014 | `lock.acquire()` outside a `with`, `.release()` not in `finally:` | matching `.release()` call on the same name exists in the function, but no enclosing `Try.finalbody` contains it |
 | CH015 | `@property`/`@cached_property` wrapping `async def` | decorated node is an `AsyncFunctionDef` |
-| CH016 | `socket.socket(...)` never closed | same shape as CH005, for `socket.socket(...)` |
+| CH016 | `socket.socket(...)` never closed | same shape as CH005, for `socket.socket(...)`, plus escaped if returned inside a tuple/list or passed as an argument to any call |
 | CH017 | `from collections import Mapping` (etc.) / `collections.Mapping` | name matches a curated ABC set, import/attribute receiver is bare `collections` (not `collections.abc`) |
 | CH018 | `asyncio.Task.current_task()` / `.all_tasks()` | attribute call on `Task`, only trusted when `Task` was imported via `from asyncio import Task` |
 | CH019 | `inspect.getargspec(...)` | attribute call/import resolves to `inspect.getargspec` |
@@ -175,6 +175,13 @@ suppressions exist specifically to avoid noise:
   loop (real, in marimo) looks identical at the AST level to the buggy
   pattern, but `sorted()` consumes the lambda synchronously within the
   same iteration, so nothing ever observes a stale value.
+- **CH016** treats a socket name as escaped if it's `return`ed as part of
+  a tuple/list (not just as the bare name) or passed as an argument to
+  any call, not just handed a `.close()` — vllm's rendezvous code returns
+  `port, s` as a tuple, collects sockets into a list that's itself
+  returned, and passes a listen socket straight into a constructor that
+  takes ownership of it. Found the day the check shipped, from the first
+  real-corpus scan.
 - **CH020** doesn't flag a `BaseException` handler whose bound name is
   actually referenced anywhere in the body (agno's background-thread
   runner reports the caught exception back via a queue instead of

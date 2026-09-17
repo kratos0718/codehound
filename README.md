@@ -112,7 +112,7 @@ Uploads findings to the repo's **Security → Code Scanning** tab via SARIF, in 
 ```yaml
 repos:
   - repo: https://github.com/kratos0718/codehound
-    rev: v1.4.0
+    rev: v1.4.1
     hooks:
       - id: codehound
 ```
@@ -133,7 +133,7 @@ repos:
 | **CH008** | `asyncio-run-in-running-loop` | `asyncio.run(...)` called from inside an `async def` — always raises `RuntimeError`, immediately, every time. | hardening rule — zero corpus hits (see below) |
 | **CH009** | `floating-thread` | A non-daemon `threading.Thread` that's `.start()`ed but never `.join()`ed — the thread analog of CH006. | hardening rule — see below |
 | **CH010** | `loop-closure-capture` | A `lambda` inside a `for` loop (or comprehension) that's *stored* (appended, assigned, returned) and captures the loop variable by reference — every stored instance ends up sharing the loop's **final** value. | **accelerate** (HuggingFace) — `MegatronEngine.get_module_config`'s `param_sync_func` list, PR #4273 |
-| **CH011** | `lru-cache-on-method` | `@lru_cache`/`@cache` decorating an instance method — the cache holds a strong reference to `self` forever, so every instance that ever calls the method leaks for the process lifetime. | hardening rule — real hits across litellm, vllm, accelerate, marimo, dspy |
+| **CH011** | `lru-cache-on-method` | `@lru_cache`/`@cache` decorating an instance method — the cache holds a strong reference to `self` forever, so every instance that ever calls the method leaks for the process lifetime. | **optuna** — `_FanovaTree`'s node-lookup methods leaked every tree built for a `get_param_importances()` call; **llama_index** — `VectaraIndex._get_corpus_key` leaked the index *and* broke its own `__del__`-based HTTP session cleanup |
 | **CH012** | `floating-process` | A non-daemon `multiprocessing.Process` that's `.start()`ed but never `.join()`ed — the process analog of CH009. | hardening rule |
 | **CH013** | `discarded-future` | `ThreadPoolExecutor`/`ProcessPoolExecutor.submit(...)` called as a bare statement — the returned `Future` (and any exception raised inside the submitted work) is silently discarded. | hardening rule — real hits in litellm, accelerate, langchain |
 | **CH014** | `unprotected-lock-acquire` | `lock.acquire()` outside a `with`, whose matching `.release()` isn't inside a `finally:` — an exception between acquire and release deadlocks every future caller of that lock. | hardening rule — real hits in vllm, accelerate, torchtune |
@@ -147,11 +147,12 @@ repos:
 `codehound list` prints this from the source of truth.
 
 CH007-CH020 don't have found-and-merged bugs behind all of them the way
-CH001-CH006 and CH010 do - most are hardening rules for well-known Python
+CH001-CH006 do - most are hardening rules for well-known Python
 correctness gotchas rather than something this project personally
-tracked down first. CH010 is the exception: it found a genuine, serious
-bug on its own, in HuggingFace's `accelerate` - see below. Building
-CH007-CH010 surfaced real false positives, each one fixed before shipping:
+tracked down first. CH010 and CH011 are the exceptions: both found
+genuine bugs on their own, in HuggingFace's `accelerate`, optuna, and
+llama_index - see below. Building CH007-CH010 surfaced real false
+positives, each one fixed before shipping:
 
 - **CH007** (agno): a bare `self.foo()` call matched against an unrelated
   same-named `async def foo` on a *different* class (agno's own
@@ -188,6 +189,33 @@ result, not a null: CH008's bug fails immediately and unconditionally, so
 it's very unlikely to survive basic testing; CH007 and CH009 both only
 match same-file names by design, and most real cases of either are
 plausibly cross-module.
+
+**The optuna and llama_index finds (CH011):** both are `@lru_cache(maxsize=
+None)` decorating an instance method - a strong reference to `self`
+retained forever. In optuna, `_FanovaTree`'s node-lookup methods leak
+every tree built for a `get_param_importances()` call (one per
+random-forest estimator). In llama_index, `VectaraIndex._get_corpus_key`
+leaks the index itself - and since `VectaraIndex.__del__` exists
+specifically to close the index's `requests.Session` on garbage
+collection, the leak silently disables that cleanup too, so an HTTP
+session leaks along with every index. Both fixed the same way: move the
+cache from a class-level decorator to a per-instance one built in
+`__init__`, so it's freed with the instance instead of outliving it. Both
+have a regression test verified to fail pre-fix and pass post-fix.
+PRs: [optuna/optuna#6859](https://github.com/optuna/optuna/pull/6859),
+[run-llama/llama_index#23089](https://github.com/run-llama/llama_index/pull/23089).
+
+**CH016 found and fixed its own false positive the day it shipped.** The
+first real-corpus scan of `unclosed-socket` turned up three hits in
+vllm's distributed process-group rendezvous code - all three sockets were
+actually handed off correctly (returned inside a tuple, collected into a
+list that's itself returned, passed as an argument into a function that
+takes ownership), just not in a shape CH005 (the check this one was
+modeled on) ever needed to recognize, since files aren't handed off this
+way nearly as often as rendezvous sockets are. Fixed by treating a name
+as escaped when it's returned as part of a tuple/list or passed as an
+argument to any call. A full corpus rescan afterward found zero remaining
+CH016 hits.
 
 **Two checks we built and did not ship.** `exception-chaining` (`except X
 as e: raise Y(...)` with no `from e`, discarding the real traceback -
@@ -249,7 +277,7 @@ codehound/
 
 Each check receives a parsed `ast` tree plus the precomputed parent map and returns `Finding`s. Adding a rule is one file + one registry line + a test. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a full walkthrough of the engine, the parent map, and the design decisions.
 
-**False-positive discipline is a feature.** CH005 won't flag a handle that's `return`ed (the caller owns it) or explicitly `.close()`d. CH006 won't flag `TaskGroup.create_task` (the group holds the reference). CH001 only fires when the *enclosing* function is `async`. CH007 scopes `self.foo()` matches to async methods on the *same* class as the call site, and bare `foo()` matches to module-level async functions that aren't shadowed by a same-named parameter. CH009 doesn't flag a thread handed off as *any* object's attribute, not just `self`. CH010 only fires when a lambda is directly stored (appended, assigned, returned), not merely passed as a callback argument that gets consumed on the spot. CH020 won't flag a `BaseException` handler whose bound name is actually referenced, or whose body re-raises anywhere in its own scope (not counting a nested try/except's own handler) — both real patterns found in agno. All of those guards exist because of real false positives caught while building the checks (see above and [`docs/FINDINGS.md`](docs/FINDINGS.md)). The test suite asserts both "bad code is flagged" and "correct code is not."
+**False-positive discipline is a feature.** CH005 won't flag a handle that's `return`ed (the caller owns it) or explicitly `.close()`d. CH006 won't flag `TaskGroup.create_task` (the group holds the reference). CH001 only fires when the *enclosing* function is `async`. CH007 scopes `self.foo()` matches to async methods on the *same* class as the call site, and bare `foo()` matches to module-level async functions that aren't shadowed by a same-named parameter. CH009 doesn't flag a thread handed off as *any* object's attribute, not just `self`. CH010 only fires when a lambda is directly stored (appended, assigned, returned), not merely passed as a callback argument that gets consumed on the spot. CH016 doesn't flag a socket returned as part of a tuple/list, or passed as an argument to any call (as opposed to being the receiver of a call on itself) — real patterns found in vllm's rendezvous code. CH020 won't flag a `BaseException` handler whose bound name is actually referenced, or whose body re-raises anywhere in its own scope (not counting a nested try/except's own handler) — both real patterns found in agno. All of those guards exist because of real false positives caught while building the checks (see above and [`docs/FINDINGS.md`](docs/FINDINGS.md)). The test suite asserts both "bad code is flagged" and "correct code is not."
 
 ---
 

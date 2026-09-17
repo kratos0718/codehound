@@ -1,8 +1,8 @@
 # Findings in the wild
 
-Seven of the twenty `codehound` rules were distilled from a bug found in a
+Eight of the twenty `codehound` rules were distilled from a bug found in a
 real, widely-used open-source project, with the fix submitted as a pull
-request. The rest (CH007-CH009, CH011-CH020) are hardening rules verified
+request. The rest (CH007-CH009, CH012-CH020) are hardening rules verified
 through real false positives against a ~20-framework validation corpus
 instead of a found-and-merged bug - see "Notes on precision" below for
 why, and what that absence itself says.
@@ -20,6 +20,8 @@ why, and what that absence itself says.
 | CH006 + CH004 `floating-task` + `deprecated-get-event-loop` | agno | 25k+ | **Found by codehound itself:** fire-and-forget `asyncio.create_task` + deprecated `get_event_loop()` in `tracing/exporter.py::_export_async` — traces could be silently dropped | PR #8183 (open) — strong task ref (set + done-callback) + `get_running_loop()` |
 | CH006 `floating-task` | agno | 25k+ | Two more `asyncio.create_task(...)` results discarded in `Workflow._broadcast_to_websocket` / `_apublish_stream_event` — same weak-reference GC risk as #8183 above | PR #10222 (open) — retained via the file's existing `_workflow_background_tasks` set + done-callback |
 | CH010 `loop-closure-capture` | accelerate (HuggingFace) | 9k+ | **Found by codehound itself:** `MegatronEngine.get_module_config`'s `param_sync_func` list builds one callback per distributed-training model chunk, but every lambda captures `model_index` by reference - whichever chunk's callback fires, it reports the *last* chunk's index to `finish_param_sync`, not its own | PR [huggingface/accelerate#4273](https://github.com/huggingface/accelerate/pull/4273) (open) — `model_index=model_index` default-arg capture; isolated regression test (the real method needs the optional `megatron-core` package, not available in CI) verified to fail pre-fix (all callbacks report index 2) and pass post-fix |
+| CH011 `lru-cache-on-method` | optuna | 12k+ | **Found by codehound itself:** `_FanovaTree`'s seven node-lookup methods are `@lru_cache(maxsize=None)` directly on the class - every tree built for a `get_param_importances()` call (one per random-forest estimator) stays reachable through the cache for the life of the process instead of being freed once the importances are computed | PR [optuna/optuna#6859](https://github.com/optuna/optuna/pull/6859) (open) — moved the caching to per-instance by wrapping the bound methods in `__init__`; regression test constructs a tree, drops the only reference, and asserts it's collected - verified to fail pre-fix and pass post-fix |
+| CH011 `lru-cache-on-method` | llama_index | 40k+ | **Found by codehound itself:** `VectaraIndex._get_corpus_key` is `@lru_cache(maxsize=None)` on the class - every index that calls it (insert/query/delete/update all do) leaks forever, which also means `VectaraIndex.__del__` (written specifically to close `self._session`) never runs, so the HTTP session leaks too | PR [run-llama/llama_index#23089](https://github.com/run-llama/llama_index/pull/23089) (open) — same per-instance-caching fix; regression test constructs an index with dummy credentials, calls the cached method, drops the reference, and asserts collection - verified to fail pre-fix and pass post-fix |
 
 ## Notes on precision
 
@@ -137,6 +139,42 @@ the false positives a naive grep would have reported:
   they're real - the check earns its keep at the same rate a well-known
   linter rule does (this is pylint's `W0702`/flake8-bugbear's `B036`
   territory), not a modeling bug like the two rejected checks above.
+- **CH011 (mlflow, marimo) — two more shapes that don't need a code
+  change** were found while chasing CH011 hits for PR candidates, worth
+  recording even though nothing in the checker itself needed fixing:
+  mlflow's `ModelRegistryStoreRegistry._get_store_with_resolved_uri` is
+  `@lru_cache`'d on a class that's instantiated exactly once, as a
+  module-level singleton (`_get_store_registry()`'s `if
+  _model_registry_store_registry is not None: return ...` guard) — the
+  cache keeping `self` alive forever is meaningless when the singleton
+  was always going to live for the process's whole lifetime anyway.
+  marimo's five hits (`calculate_top_k_rows`, `_apply_filters_query_sort_cached`,
+  `get_config` ×2) all carry `# noqa: B019` — flake8-bugbear's own rule
+  number for exactly this pattern — meaning marimo's maintainers already
+  reviewed and deliberately accepted each one. Filing PRs for either
+  would mean "fixing" code the projects have already correctly reasoned
+  about; recorded here instead as real corpus signal a future CH011 guard
+  (skip a singleton-shaped class, skip a line already carrying a
+  suppressing `noqa`) would need to account for, without changing today's
+  shipped behavior speculatively.
+- **CH016 (vllm), found and fixed the day it shipped** — the very first
+  real-corpus scan of the brand new `unclosed-socket` check turned up
+  three hits in vllm's distributed process-group rendezvous code, and all
+  three were false positives in a shape CH005 (the check CH016 was
+  modeled on) never had to handle: a socket handed off by being `return`ed
+  *inside a tuple* (`return port, s`, not the bare name), one collected
+  into a list that's itself `return`ed (`socks.append(s)` then `return
+  ports, socks`), and one passed straight into another function that takes
+  ownership of it (`create_tcp_store(host, port,
+  listen_socket=listen_socket)`). Files aren't handed off this way nearly
+  as often as sockets are in networking/rendezvous code, which is likely
+  why CH005 never needed these guards. Fixed by treating a name as escaped
+  if it's returned as part of a tuple/list, or passed as an argument to
+  any call (as opposed to being the receiver of a method call on itself,
+  like `s.bind(...)`) — verified against the exact three vllm sites, and a
+  full corpus rescan afterward found zero remaining CH016 hits across all
+  ~29 frameworks, a real result rather than a gap (sockets not handed off
+  this way and never closed appear to be genuinely rare here).
 
 These are why the test suite asserts *both* directions: bad code flagged, good code
 left alone.
@@ -156,3 +194,16 @@ closure-capture bug in distributed-training parameter-sync callbacks - the
 kind of thing that would silently corrupt which model chunk's gradients get
 synced, in a library used across the entire PyTorch training ecosystem. Not
 a bug I was looking for; the scan found it.
+
+CH011 did it twice in one afternoon, in two unrelated projects, once the
+20-check corpus scan was used to hunt down real PR candidates rather than
+just to sanity-check precision. In optuna, `_FanovaTree`'s node-lookup
+methods leaked every random-forest tree ever built for a feature-importance
+computation. In llama_index, `VectaraIndex._get_corpus_key` did the same
+thing to the index itself - and because the class's own `__del__` exists
+specifically to close its HTTP session on garbage collection, the leak also
+silently broke that cleanup path, so the bug compounded into a second one
+nobody had connected to the first. Both fixed the same way (move the
+`lru_cache` from class scope to a per-instance wrapper built in `__init__`),
+both verified with a regression test that fails pre-fix and passes post-fix,
+both opened as PRs the same day the check itself shipped.
