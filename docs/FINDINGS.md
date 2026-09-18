@@ -1,12 +1,12 @@
 # Findings in the wild
 
-Eight of the thirty-six `codehound` rules were distilled from a bug
+Eight of the thirty-nine `codehound` rules were distilled from a bug
 found in a real, widely-used open-source project, with the fix submitted
-as a pull request. The rest (CH007-CH009, CH012-CH036) are hardening
+as a pull request. The rest (CH007-CH009, CH012-CH039) are hardening
 rules verified through real false positives against a ~29-framework
 validation corpus instead of a found-and-merged bug - see "Notes on
 precision" below for why, and what that absence itself says. CH026,
-CH029, CH034, and CH036 are partial exceptions: each found real,
+CH029, CH034, CH036, and CH038 are partial exceptions: each found real,
 previously-unreported bugs on their first scan, but not all of them
 have a PR yet - see "Real bugs found, not yet filed" below.
 
@@ -328,6 +328,76 @@ the false positives a naive grep would have reported:
   precision-narrowing pass after the first corpus scan (2 real hits,
   zero false positives, across ~29 frameworks) - there's no legitimate
   Python construct any of them could be mistaken for.
+- **CH038's two container-literal false positives, both found by
+  reading real corpus hits, both fixed with one rule.** The first pass
+  matched bugbear's own B018 exactly - flag any `List`/`Set`/`Dict`/
+  `Tuple` literal used as a bare statement, unconditionally. Two real
+  corpus hits showed why that's wrong: HuggingFace `datasets`'
+  `arrow_dataset.py` has `indices.pop(0), tasks.pop(0)` - a tuple of
+  two calls, each mutating a list; the tuple result is discarded, but
+  the pops are the entire point. scikit-learn's `_covtype.py` has
+  `X, y` inside `try: ... except NameError:` - deliberately probing
+  whether those two names are already bound in the enclosing scope,
+  exploiting the `NameError` a bare name reference raises when it
+  isn't. Neither is "forgot to assign, return, or assert" - both
+  compute nothing themselves but still do something through their
+  elements. Fixed with one rule that explains both: a container
+  literal is only flagged if every element, recursively, is itself a
+  constant - a `Name`, `Call`, or `Attribute` anywhere inside means the
+  container might not be side-effect-free, so it's skipped rather than
+  guessed at.
+- **CH038's builtin-shadowing false positive, found in langgraph's
+  CLI.** `with Progress(message="Pulling...") as set:` followed by
+  `set("Building...")` a few lines later - `set` is a local variable
+  bound by the `with ... as`, a status-setter callback, not the
+  builtin `set` type. The curated "pure builtin" list this check
+  matches against is exactly the kind of short, common identifier
+  real code reuses. Fixed by scanning the whole file once for every
+  name that's ever bound anywhere (assignment target, parameter,
+  `with ... as`, `except ... as`, `def`/`class` name, import alias)
+  and refusing to trust a "pure builtin" call whose name shows up in
+  that set.
+- **CH038's notebook-cell false positive - the single largest false-
+  positive cluster found this session, and the reason the guard needed
+  a second pass to actually work.** marimo's own `_smoke_tests/`
+  directory accounted for over half of the very first corpus scan's 82
+  hits: a bare literal/call as the last meaningful statement of an
+  `@app.cell`-decorated function is marimo's own convention for the
+  cell's displayed output, not a forgotten return. The first version of
+  the guard (skip only the literal last statement of the function body)
+  missed roughly a third of these, because marimo *always* closes a
+  cell with a `return` - bare `return` when nothing is exported,
+  `return x, y` when something is - so the display statement is
+  usually the one right *before* that trailing `return`, not the
+  actual last statement. Two real shapes proved this: `1\n    return`
+  (nothing exported) and `refresh\n    ...\n    len(spans)\n    return
+  file_path, spans` (both a display value and exported names in the
+  same cell). Fixed by stripping a trailing `Return` before checking
+  "is this the last statement." A *different* notebook convention -
+  sphinx-gallery's plain `# %%`-comment-delimited scripts, found in
+  optuna's tutorials - has no AST-visible marker at all, so those
+  remain an accepted, undetected false positive.
+- **CH038's one accepted, undetectable-via-AST limitation, shared with
+  bugbear's own B018.** A call to a curated "pure" builtin used
+  specifically to probe whether it raises - `try: repr(x) except
+  Exception:` to check for a broken `__repr__`, the same idiom already
+  excluded `int(s)` for (a validation call, discarding the result on
+  purpose) - still gets flagged, because telling "used for its
+  exception" apart from "result forgotten" needs tracing the enclosing
+  `try`/`except`, which risks silently suppressing the exact "forgot to
+  assign" bug this check exists to catch. Real instances found and left
+  flagged: letta's `otel/tracing.py` (`str(value)`, probing for a
+  broken `__str__`) and scikit-learn's `estimator_checks.py`
+  (`repr(estimator)`, probing for a broken `__repr__`).
+- **CH039, verified before any AST code was written, the same way
+  CH034-CH036 were.** Five threads, each doing `with threading.Lock():`
+  around an 0.01s `time.sleep`, finished in ~0.013s total when run
+  under a per-call, never-shared lock - not the ~0.05s they'd take if
+  the lock were actually serializing them. The "critical section" ran
+  fully concurrently, proving the lock did nothing. Zero corpus hits
+  across ~29 frameworks - an honest null in the same category as CH008
+  and CH035, not evidence the check is wrong, just that well-maintained
+  codebases don't happen to make this specific mistake.
 
 These are why the test suite asserts *both* directions: bad code flagged, good code
 left alone.
@@ -436,8 +506,9 @@ Two more real bugs found the same way, in different checks:
   Anyone missing the optional `lilac` dependency gets an unrelated
   `TypeError: exceptions must derive from BaseException` instead of the
   intended install instructions - the one case a helpful error message
-  most needs to actually show up. Fix is a single, unambiguous line
-  (`raise ImportError(...)`); queued to file.
+  most needs to actually show up. Fixed, with a regression test
+  verified to fail on pre-fix code and pass post-fix: filed as
+  [run-llama/llama_index#23123](https://github.com/run-llama/llama_index/pull/23123).
 - **CH036 (`environ-reassignment`) in HuggingFace `datasets`.**
   `Dataset.map`'s multiprocessing path does `os.environ = prev_env`
   immediately after opening `mp.Pool(num_proc)`, clearly intended to
@@ -453,6 +524,73 @@ Two more real bugs found the same way, in different checks:
   surrounding function's full context read first to confirm `prev_env`
   is the right restore target, which hasn't been done yet - queued, not
   filed.
+- **CH038 (`useless-expression-statement`) in mlflow and vllm - the
+  same short-circuit bug, twice, independently.** mlflow's
+  `transformers/__init__.py` validates a `List[Dict]` input with
+  `all(_validate_input_dictionary_contains_only_strings_and_lists_of_strings(x)
+  for x in input_data)`. Read the validator: it returns `None` on
+  success (raises on failure, no explicit `return` otherwise) - so
+  `all()` calls it on the first item, gets `None` back (falsy), and
+  *stops right there*, returning `False` without ever validating any
+  later item in the list. A list `[valid, invalid, invalid]` only ever
+  checks the first entry; the other two invalid entries pass silently.
+  vllm's `benchmarks/sweep/plot.py` and `plot_pareto.py` have the exact
+  same shape with the exact same likely cause: `all(executor.map(partial(_plot_fig,
+  ...), ...))` right under the comment "Resolve the iterable to ensure
+  that the workers are run" - `_plot_fig` has no return statement, so
+  it returns `None`, and `all()` stops consuming the mapped iterator
+  after the first result, meaning only the first group of figures
+  actually gets plotted across the worker pool despite the comment's
+  stated intent to run all of them. Both would be trivially fixed
+  (`list(...)` instead of `all(...)`, or a plain `for` loop), but
+  neither was filed: mlflow's own `CLAUDE.md` requires a
+  `Co-Authored-By: Claude` trailer "when Claude Code authors or
+  co-authors changes," and vllm's `AGENTS.md` requires disclosing AI
+  involvement in the PR body - both the direct opposite of this
+  project's own no-AI-traces policy (see [`docs/FINDINGS.md`](#notes-on-precision)'s
+  CH026 section for the same conflict against vllm/transformers
+  earlier). Documented here instead of guessed at or filed against
+  policy.
+- **CH038 (`useless-expression-statement`) in letta - found, understood,
+  not filed, for a different reason than the mlflow/vllm pair.**
+  `summarizer_sliding_window.py` has, in order: a comment reading "Some
+  arbitrary minimum value (10%) to avoid negatives from badly
+  configured summarizer percentage," then a bare
+  `max(1 - summarizer_config.sliding_window_percentage, 0.10)` whose
+  result is never assigned to anything, then two lines later
+  `goal_tokens = (1 - summarizer_config.sliding_window_percentage) *
+  agent_llm_config.context_window` - using the *unclamped* expression
+  directly. The clamp the comment describes was very likely meant to
+  feed into that `goal_tokens` line and never got wired in. If
+  `sliding_window_percentage` is configured close to `1.0`,
+  `goal_tokens` collapses toward zero, and the eviction loop a few
+  lines further down (`while approx_token_count >= goal_tokens and
+  eviction_percentage < 1.0:`) would very plausibly run until it hits
+  its own `eviction_percentage >= 1.0` escape hatch and raises
+  `ValueError("No assistant message found for sliding window
+  summarization")` - a real failure mode for an aggressive-but-legal
+  configuration, not a hypothetical one. Understood well enough to
+  write the fix (`goal_tokens = max(1 - summarizer_config.sliding_window_percentage,
+  0.10) * agent_llm_config.context_window`, deleting the now-redundant
+  bare `max(...)` line) - not filed anyway, because letta's own
+  `AI_POLICY.md` requires disclosing "all AI usage in any form," a
+  fourth repo hitting the same conflict as vllm/transformers/mlflow.
+- **CH038 (`useless-expression-statement`) in pydantic - found, low
+  confidence in the fix, not filed for that reason instead.**
+  `_internal/_decorators.py`'s `_decorator_infos_for_class` has a chain
+  of `elif isinstance(info, ...)` branches for each decorator-info
+  type, ending in an `else:` branch with a bare
+  `isinstance(var_value, ComputedFieldInfo)` right before the line that
+  actually uses the result. Reads like a dropped `assert` - the keyword
+  removed, the rest of the statement left behind - but the *correct*
+  fix depends on whether pydantic actually wants a hard runtime
+  assertion here or deliberately relies on the `else` branch being
+  reached only when the type is already known some other way (by
+  construction, from an earlier check this file wasn't fully traced
+  through). Pydantic has no CLAUDE.md/AGENTS.md AI-disclosure conflict
+  - the reason this one isn't filed is the same "don't ship a fix
+  you're not confident is the *right* fix" bar applied to the
+  `datasets`/CH036 finding above, not a policy conflict.
 
 ## Bugs the tool found on its own
 

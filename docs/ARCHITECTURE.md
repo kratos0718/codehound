@@ -75,11 +75,14 @@ src/codehound/
 │   ├── strip_multichar.py      CH033
 │   ├── raise_literal.py        CH034
 │   ├── empty_except_tuple.py   CH035
-│   └── environ_reassignment.py CH036
+│   ├── environ_reassignment.py CH036
+│   ├── pointless_comparison.py CH037
+│   ├── useless_expression.py   CH038
+│   └── lock_constructed_inline.py CH039
 └── __init__.py      # public API surface + __version__
 ```
 
-~4,450 lines of source, zero runtime dependencies (standard-library `ast` only).
+~4,800 lines of source, zero runtime dependencies (standard-library `ast` only).
 
 ## The core contract
 
@@ -217,7 +220,7 @@ HuggingFace's `transformers` produced byte-identical output at `workers=1`
 and at the default worker count, while cutting wall-clock time from 57
 seconds to 12.
 
-## The thirty-six checks
+## The thirty-nine checks
 
 | Code | Detects | Key structural test |
 |------|---------|--------------------|
@@ -257,6 +260,9 @@ seconds to 12.
 | CH034 | `raise` with a literal instead of an exception instance | `Raise.exc` is a `Constant`/`JoinedStr`/`List`/`Dict`/`Set`/`Tuple` node |
 | CH035 | `except ():` matches nothing | `ExceptHandler.type` is a `Tuple` with zero elements |
 | CH036 | direct assignment to `os.environ` | `Assign` target is an `Attribute` node, `attr == "environ"`, receiver is a bare `Name` `os` |
+| CH037 | comparison used as a bare statement | `Expr` whose `value` is a `Compare` node |
+| CH038 | literal/pure-builtin-call used as a bare statement | `Expr` whose `value` is a constant-only `List`/`Set`/`Dict`/`Tuple`, a non-string `Constant`, or a call to an unshadowed curated-pure builtin; skipped if it's the display statement of an `@*.cell`-decorated function |
+| CH039 | lock/RLock constructed directly in the `with`/`async with` that acquires it | `withitem.context_expr` is itself a `Call` to `threading.Lock`/`RLock`, `multiprocessing.Lock`/`RLock`, or `asyncio.Lock` |
 
 Each lives in its own file with a module docstring explaining the bug and a
 real-world example of where it was found.

@@ -1983,3 +1983,194 @@ def test_ch036_ignores_unrelated_attribute_named_environ():
     code = "config.environ = {}\n"
     assert _run(code, ["CH036"]) == []
 
+
+# --- CH037 pointless-comparison-statement -------------------------------------------------
+
+
+def test_ch037_flags_bare_equality_comparison():
+    code = "x = 1\nx == 5\n"
+    findings = _run(code, ["CH037"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH037"
+
+
+def test_ch037_flags_bare_is_comparison():
+    code = "x = None\nx is None\n"
+    findings = _run(code, ["CH037"])
+    assert len(findings) == 1
+
+
+def test_ch037_ignores_comparison_inside_assert():
+    code = "x = 1\nassert x == 5\n"
+    assert _run(code, ["CH037"]) == []
+
+
+def test_ch037_ignores_comparison_inside_assignment():
+    code = "x = 1\ny = (x == 5)\n"
+    assert _run(code, ["CH037"]) == []
+
+
+def test_ch037_ignores_comparison_inside_if():
+    code = "x = 1\nif x == 5:\n    pass\n"
+    assert _run(code, ["CH037"]) == []
+
+
+# --- CH038 useless-expression-statement ---------------------------------------------------
+
+
+def test_ch038_flags_bare_list_literal():
+    code = "[1, 2, 3]\n"
+    findings = _run(code, ["CH038"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH038"
+
+
+def test_ch038_flags_bare_int_literal():
+    code = "42\n"
+    findings = _run(code, ["CH038"])
+    assert len(findings) == 1
+
+
+def test_ch038_flags_bare_pure_builtin_call():
+    code = "x = [1, 2]\nlen(x)\n"
+    findings = _run(code, ["CH038"])
+    assert len(findings) == 1
+
+
+def test_ch038_ignores_string_literal_statement():
+    code = "'this is used as an inline comment'\n"
+    assert _run(code, ["CH038"]) == []
+
+
+def test_ch038_ignores_docstring():
+    code = "def f():\n    'docstring'\n    return 1\n"
+    assert _run(code, ["CH038"]) == []
+
+
+def test_ch038_ignores_validation_call_not_in_pure_list():
+    code = "s = '5'\nint(s)\n"
+    assert _run(code, ["CH038"]) == []
+
+
+def test_ch038_ignores_regular_function_call():
+    code = "def has_side_effect():\n    pass\n\nhas_side_effect()\n"
+    assert _run(code, ["CH038"]) == []
+
+
+def test_ch038_ignores_assigned_literal():
+    code = "x = [1, 2, 3]\n"
+    assert _run(code, ["CH038"]) == []
+
+
+def test_ch038_ignores_tuple_of_calls_with_side_effects():
+    code = "indices = [1, 2]\ntasks = [3, 4]\nindices.pop(0), tasks.pop(0)\n"
+    assert _run(code, ["CH038"]) == []
+
+
+def test_ch038_ignores_tuple_of_names_probing_existence():
+    code = "try:\n    X, y\nexcept NameError:\n    X = 1\n    y = 2\n"
+    assert _run(code, ["CH038"]) == []
+
+
+def test_ch038_flags_tuple_of_pure_constants():
+    code = "(1, 2, 3)\n"
+    findings = _run(code, ["CH038"])
+    assert len(findings) == 1
+
+
+def test_ch038_ignores_shadowed_builtin_name():
+    code = (
+        "def run():\n"
+        "    with Progress() as set:\n"
+        "        set('Building...')\n"
+    )
+    assert _run(code, ["CH038"]) == []
+
+
+def test_ch038_flags_unshadowed_pure_builtin():
+    code = "x = [1, 2]\nlen(x)\n"
+    findings = _run(code, ["CH038"])
+    assert len(findings) == 1
+
+
+def test_ch038_ignores_last_statement_in_notebook_cell_function():
+    code = (
+        "import marimo\n"
+        "app = marimo.App()\n\n"
+        "@app.cell\n"
+        "def _(x):\n"
+        "    [1, 2]\n"
+    )
+    assert _run(code, ["CH038"]) == []
+
+
+def test_ch038_ignores_display_statement_right_before_trailing_return():
+    code = (
+        "import marimo\n"
+        "app = marimo.App()\n\n"
+        "@app.cell\n"
+        "def _(x):\n"
+        "    42\n"
+        "    return x\n"
+    )
+    assert _run(code, ["CH038"]) == []
+
+
+def test_ch038_flags_useless_statement_not_immediately_before_return():
+    code = (
+        "import marimo\n"
+        "app = marimo.App()\n\n"
+        "@app.cell\n"
+        "def _(x):\n"
+        "    42\n"
+        "    y = x + 1\n"
+        "    return y\n"
+    )
+    findings = _run(code, ["CH038"])
+    assert len(findings) == 1
+
+
+# --- CH039 lock-constructed-inline ---------------------------------------------------------
+
+
+def test_ch039_flags_threading_lock_constructed_inline():
+    code = "import threading\ndef f():\n    with threading.Lock():\n        pass\n"
+    findings = _run(code, ["CH039"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH039"
+
+
+def test_ch039_flags_asyncio_lock_constructed_inline():
+    code = "import asyncio\nasync def f():\n    async with asyncio.Lock():\n        pass\n"
+    findings = _run(code, ["CH039"])
+    assert len(findings) == 1
+
+
+def test_ch039_flags_multiprocessing_lock_constructed_inline():
+    code = "import multiprocessing\ndef f():\n    with multiprocessing.Lock():\n        pass\n"
+    findings = _run(code, ["CH039"])
+    assert len(findings) == 1
+
+
+def test_ch039_ignores_lock_stored_as_attribute():
+    code = (
+        "import threading\n"
+        "class C:\n"
+        "    def __init__(self):\n"
+        "        self.lock = threading.Lock()\n"
+        "    def f(self):\n"
+        "        with self.lock:\n"
+        "            pass\n"
+    )
+    assert _run(code, ["CH039"]) == []
+
+
+def test_ch039_ignores_lock_passed_as_variable():
+    code = "def f(lock):\n    with lock:\n        pass\n"
+    assert _run(code, ["CH039"]) == []
+
+
+def test_ch039_ignores_unrelated_context_manager():
+    code = "def f():\n    with open('x') as fh:\n        pass\n"
+    assert _run(code, ["CH039"]) == []
+
