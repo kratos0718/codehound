@@ -6,14 +6,20 @@ found and fixed (or opened as a PR) in a popular open-source AI framework
 (CH007-CH009, CH012-CH031) are hardening rules verified against real
 false positives across a ~29-framework validation corpus instead - see
 docs/FINDINGS.md.
+
+Also has the parts of a production-grade linter that don't require
+rewriting the whole thing in Rust: inline `# noqa` suppression,
+`[tool.codehound]` project config, `--fix` for the checks where the
+rewrite is genuinely unambiguous, and scanning parallelized across a
+process pool for large codebases.
 """
 
 from __future__ import annotations
 
 from codehound.checks import ALL_CHECKS, get_checks
-from codehound.core import Check, Finding, scan_file, scan_path
+from codehound.core import Check, Finding, scan_file, scan_files, scan_path
 
-__version__ = "1.7.0"
+__version__ = "1.8.0"
 
 __all__ = [
     "ALL_CHECKS",
@@ -21,6 +27,7 @@ __all__ = [
     "Check",
     "Finding",
     "scan_file",
+    "scan_files",
     "scan_path",
     "__version__",
 ]

@@ -3,30 +3,72 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import sys
 
 from codehound import __version__
 from codehound.checks import ALL_CHECKS, get_checks
-from codehound.core import DEFAULT_SKIP_DIRS, scan_path
+from codehound.config import load_config
+from codehound.core import DEFAULT_SKIP_DIRS, build_parents, iter_python_files, scan_files
+from codehound.fixes import fix_source
 from codehound.sarif import to_sarif
 from codehound.terminal import format_findings_text, format_summary
 
 
+def _apply_fixes(paths: list[str], skip_dirs: frozenset) -> tuple[int, int]:
+    """Rewrite every fixable finding in place. Returns ``(files_changed, edit_count)``."""
+    files_changed = 0
+    total_edits = 0
+    for root in paths:
+        for path in iter_python_files(root, skip_dirs):
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    source = fh.read()
+            except (OSError, UnicodeDecodeError):
+                continue
+            try:
+                tree = ast.parse(source, filename=path)
+            except SyntaxError:
+                continue
+            parents = build_parents(tree)
+            new_source, count = fix_source(source, tree, parents)
+            if count:
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(new_source)
+                files_changed += 1
+                total_edits += count
+    return files_changed, total_edits
+
+
 def _cmd_scan(args: argparse.Namespace) -> int:
-    selected = [s.strip() for s in args.select.split(",")] if args.select else None
+    config = load_config()
+
+    select_arg = args.select or (",".join(config.select) if config.select else None)
+    selected = [s.strip() for s in select_arg.split(",")] if select_arg else None
     checks = get_checks(selected)
     if not checks:
-        print(f"No checks matched: {args.select}", file=sys.stderr)
+        print(f"No checks matched: {select_arg}", file=sys.stderr)
         return 2
+
+    paths = args.paths or config.paths or ["."]
 
     skip = set(DEFAULT_SKIP_DIRS)
     if args.include_tests:
         skip -= {"tests", "test", "testing"}
-    findings = []
-    for path in args.paths:
-        findings.extend(scan_path(path, checks, skip_dirs=frozenset(skip)))
-    findings.sort(key=lambda f: (f.path, f.line, f.col, f.code))
+    skip |= set(config.exclude)
+    if args.exclude:
+        skip |= {e.strip() for e in args.exclude.split(",") if e.strip()}
+
+    if args.fix:
+        files_changed, edit_count = _apply_fixes(paths, frozenset(skip))
+        if edit_count:
+            print(f"Fixed {edit_count} issue(s) in {files_changed} file(s).", file=sys.stderr)
+
+    all_files: list[str] = []
+    for path in paths:
+        all_files.extend(iter_python_files(path, frozenset(skip)))
+    findings = scan_files(all_files, checks)
 
     if args.format == "json":
         print(json.dumps([f.as_dict() for f in findings], indent=2))
@@ -64,13 +106,26 @@ def build_parser() -> argparse.ArgumentParser:
     scan = sub.add_parser("scan", help="scan one or more files/directories for issues")
     scan.add_argument(
         "paths",
-        nargs="+",
+        nargs="*",
         metavar="path",
-        help="file(s) or director(y/ies) to scan (accepts multiple, for pre-commit)",
+        help=(
+            "file(s) or director(y/ies) to scan (accepts multiple, for pre-commit). "
+            "Defaults to `paths` in pyproject.toml's [tool.codehound], then `.`"
+        ),
     )
     scan.add_argument(
         "--select",
-        help="comma-separated check codes/names to run (default: all), e.g. CH001,CH006",
+        help=(
+            "comma-separated check codes/names to run (default: `select` in "
+            "pyproject.toml's [tool.codehound], else all), e.g. CH001,CH006"
+        ),
+    )
+    scan.add_argument(
+        "--exclude",
+        help=(
+            "comma-separated extra directory names to skip, merged with the "
+            "built-in defaults and pyproject.toml's [tool.codehound] `exclude`"
+        ),
     )
     scan.add_argument(
         "--format",
@@ -87,6 +142,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--exit-zero",
         action="store_true",
         help="always exit 0, even when issues are found",
+    )
+    scan.add_argument(
+        "--fix",
+        action="store_true",
+        help=(
+            "rewrite fixable findings in place before reporting (currently CH017, "
+            "and CH004 only inside async functions - see docs/ARCHITECTURE.md)"
+        ),
     )
     scan.set_defaults(func=_cmd_scan)
 

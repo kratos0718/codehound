@@ -31,8 +31,11 @@ a style linter.
 ```
 src/codehound/
 ├── core.py          # engine: discovery, parsing, the Finding/Check contract,
-│                    #   parent map, and shared AST predicates
+│                    #   parent map, shared AST predicates, noqa suppression,
+│                    #   sequential + parallel scan orchestration
 ├── cli.py           # `scan` / `list`, text|json|csv|sarif output, exit codes
+├── config.py        # [tool.codehound] in pyproject.toml (select/exclude/paths)
+├── fixes.py          # --fix: CH017 always, CH004 only inside async def
 ├── sarif.py         # SARIF 2.1.0 serialization for GitHub Code Scanning
 ├── terminal.py      # colored text output (TTY-aware, respects NO_COLOR)
 ├── checks/
@@ -71,7 +74,7 @@ src/codehound/
 └── __init__.py      # public API surface + __version__
 ```
 
-~3,600 lines of source, zero runtime dependencies (standard-library `ast` only).
+~4,000 lines of source, zero runtime dependencies (standard-library `ast` only).
 
 ## The core contract
 
@@ -123,9 +126,91 @@ Three shared predicates are built on top of it:
    "bad" code and would drown real findings.
 2. `scan_file(path, checks)` reads the file, `ast.parse`s it (a `SyntaxError`
    yields zero findings rather than crashing the run), builds the parent map
-   once, and runs every check.
-3. `scan_path` aggregates and sorts findings by `(path, line, col, code)` so
-   output is deterministic — important for diffing in CI.
+   once, runs every check, then strips any finding whose line carries a
+   matching `# noqa` (see below).
+3. `scan_files(paths, checks)` runs `scan_file` across an already-expanded
+   file list, in parallel once there are enough of them (see below), then
+   sorts by `(path, line, col, code)` so output is deterministic - important
+   for diffing in CI. `scan_path(root, checks)` is `scan_files` plus the
+   `iter_python_files` walk, kept as a convenience for a single root.
+4. The CLI expands every root path argument through `iter_python_files`
+   itself and calls `scan_files` exactly once for the whole invocation -
+   not once per root - so a pre-commit call with many individual file
+   arguments doesn't spin up a separate process pool per file.
+
+## Inline suppression (`# noqa`)
+
+`core._parse_noqa_lines(source)` does one text-level pass over the file's
+physical lines with a regex (`#\s*noqa\b(?::\s*(?P<codes>...))?`,
+case-insensitive) and returns `{line_number: codes_or_None}`. `scan_file`
+filters its findings against that map after running every check -
+deliberately a text scan, not an AST one, so it can't distinguish a real
+`# noqa` from one that happens to sit inside a string literal, but that's
+the exact same trade-off flake8 and Ruff already make with this
+convention, and matching their syntax means a project can suppress
+codehound and flake8/Ruff findings on the same line without either tool
+choking on the other's comment.
+
+## Project config (`[tool.codehound]`)
+
+`config.load_config()` reads `pyproject.toml` from the current directory
+via the standard-library `tomllib` (Python 3.11+) and returns a
+`CodehoundConfig` with `select`/`exclude`/`paths`, defaulting every field
+to empty when the file, the table, or `tomllib` itself doesn't exist -
+never raises, so a missing or unparsable config is silently equivalent to
+not having one. `tomllib` was deliberately not backfilled with an
+optional-dependency fallback for 3.9/3.10: the CLI's own flags cover
+every one of these fields identically on any supported Python version, so
+skipping config-file loading there costs a convenience, never a
+capability. `cli._cmd_scan` merges config values in only where the
+matching CLI flag wasn't passed - explicit flags always win.
+
+## `--fix`
+
+`fixes.py` deliberately covers exactly two checks - CH017 (`collections.
+<ABC>` → `collections.abc.<ABC>`, a pure rename, always safe) and CH004
+(`asyncio.get_event_loop()` → `asyncio.get_running_loop()`, but only when
+`enclosing_function` resolves to an `AsyncFunctionDef` - outside one,
+`get_running_loop()` raises where `get_event_loop()` wouldn't, so that
+case is left as detection-only). Every other check either needs a
+judgment call this tool isn't positioned to make automatically, or an
+import that may or may not already be in scope - guessing wrong there
+(silently injecting an import, or leaving a `NameError`) is worse than
+just reporting the finding.
+
+Edits are computed as `(start_line, start_col, end_line, end_col,
+replacement)` from the same `lineno`/`col_offset`/`end_lineno`/
+`end_col_offset` fields the checks themselves already read, converted to
+absolute string offsets and applied in a single pass sorted in *reverse*
+start-offset order - so an earlier edit in the file is never shifted by a
+later one changing the string's length ahead of it. `cli._apply_fixes`
+runs this over every matched file, writes back only the ones that
+actually changed, then the normal scan runs afterward against the
+now-fixed source, so `--fix`'s reported remaining findings reflect
+reality rather than double-counting what was just rewritten.
+
+One documented limitation, inherited from `ast` itself rather than
+introduced here: `col_offset` counts UTF-8 *bytes*, not characters, so an
+edit on a line with multi-byte characters before the edit point could
+land a column off. This doesn't affect the overwhelmingly common case of
+ASCII source before the edit site.
+
+## Parallel scanning
+
+`scan_files` sequentially scans below `_MIN_FILES_FOR_PARALLEL` (16) files
+- a process pool's startup cost isn't worth it for that few, and it's
+also exactly the shape of a typical pre-commit invocation (a handful of
+changed files as separate arguments). Above that threshold, it hands the
+work to a `concurrent.futures.ProcessPoolExecutor` sized to
+`os.cpu_count()` by default, mapping a module-level `_scan_file_worker`
+(needs to be a plain top-level function, not a closure, to pickle across
+process boundaries) over `(path, checks)` pairs - `Check` instances hold
+no state beyond their class attributes, so they pickle without any
+special handling. Findings are collected back and sorted once, identical
+to the sequential path. Verified, not just assumed safe: a full scan of
+HuggingFace's `transformers` produced byte-identical output at `workers=1`
+and at the default worker count, while cutting wall-clock time from 57
+seconds to 12.
 
 ## The thirty-one checks
 
@@ -255,15 +340,18 @@ flagged, and the idiomatic fix is *not*.
 
 ## CLI and CI integration
 
-`codehound scan <path> [<path> ...]` prints `path:line:col: CODE message`
+`codehound scan [<path> ...]` prints `path:line:col: CODE message`
 (colored when stdout is a real terminal, plain otherwise), supports
-`--select CH001,CH006`, `--format json|csv|sarif`, and `--include-tests`. It
-accepts multiple paths in one invocation - not just for convenience, but
-because that's how `pre-commit` invokes a hook (one call, every changed file
-as a separate argument). It exits **non-zero when findings exist** (unless
-`--exit-zero`), so it drops into CI as a gate: `run: codehound scan src`.
-`codehound list` prints the rule catalog from the registry — the single
-source of truth.
+`--select`, `--exclude`, `--format json|csv|sarif`, `--include-tests`, and
+`--fix`. Paths are `nargs="*"` (not required) specifically so `[tool.
+codehound]`'s `paths` can supply a default when the CLI is run bare;
+`args.paths or config.paths or ["."]` is the exact fallback chain. It
+still accepts multiple paths in one invocation for the same reason it
+always did - that's how `pre-commit` invokes a hook (one call, every
+changed file as a separate argument). It exits **non-zero when findings
+exist** (unless `--exit-zero`), so it drops into CI as a gate: `run:
+codehound scan src`. `codehound list` prints the rule catalog from the
+registry — the single source of truth.
 
 Three integration points ship at the repo root, each a thin wrapper around
 this same CLI - none of them duplicate its logic:
@@ -275,7 +363,9 @@ this same CLI - none of them duplicate its logic:
 - `.pre-commit-hooks.yaml` - `language: python`, `entry: codehound scan`,
   `types: [python]`. pre-commit installs codehound into its own managed
   venv and calls `codehound scan <changed files...>` - this is the reason
-  `scan` takes `nargs="+"` instead of a single path.
+  the CLI expands and scans every root path argument in one combined
+  `scan_files` call rather than one `scan_path` call per argument (avoids
+  spinning up a separate process pool per file when pre-commit passes many).
 
 ## Extending it
 
@@ -287,8 +377,19 @@ To add a rule:
 
 No other wiring — the CLI, selection, and output handle it automatically.
 
+A rule only gets a `--fix` entry in `fixes.py` when the rewrite is
+mechanical and unambiguous with no import-injection or semantic-shift
+risk (see "`--fix`" above) - most rules should stay detection-only, and
+that's a feature, not a gap to close.
+
 ## Testing
 
-`tests/test_checks.py` parses small inline snippets and asserts finding counts.
-Tests run on Python 3.9 / 3.11 / 3.12 in GitHub Actions, plus a self-scan
-(`codehound scan src`) so the tool is held to its own standard.
+`tests/test_checks.py` parses small inline snippets and asserts finding
+counts, one file per check family. `tests/test_noqa.py`,
+`tests/test_config.py`, `tests/test_fixes.py`, and
+`tests/test_parallel_scan.py` cover the engine-level features - inline
+suppression, project config, autofix, and parallel-vs-sequential
+correctness - the same way, plus `tests/test_output_formats.py` for
+SARIF/colored-text serialization. Tests run on Python 3.9 / 3.11 / 3.12
+in GitHub Actions, plus a self-scan (`codehound scan src`) so the tool
+is held to its own standard.

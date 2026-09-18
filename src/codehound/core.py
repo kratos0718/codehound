@@ -9,8 +9,15 @@ from __future__ import annotations
 
 import ast
 import os
+import re
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from typing import Iterator
+
+# Below this many files, a process pool's startup cost isn't worth it -
+# sequential scanning wins on small inputs (a handful of files, which is
+# also exactly pre-commit's typical invocation shape).
+_MIN_FILES_FOR_PARALLEL = 16
 
 
 # Directories we never want to descend into. Third-party and generated code is
@@ -181,6 +188,44 @@ def attr_call_parts(node: ast.AST):
     return None, attr
 
 
+# --- Inline suppression (# noqa) --------------------------------------------------
+
+_NOQA_RE = re.compile(r"#\s*noqa\b(?::\s*(?P<codes>[A-Za-z0-9_, ]+))?", re.IGNORECASE)
+
+
+def _parse_noqa_lines(source: str) -> dict[int, set[str] | None]:
+    """Map 1-indexed line number -> suppressed codes, or ``None`` for a bare
+    ``# noqa`` that suppresses every finding on that line.
+
+    Same convention flake8/ruff use: a trailing ``# noqa`` (optionally
+    ``# noqa: CH001,CH002``) on the offending physical line. This is a
+    text-level scan, not an AST one - a real ``# noqa`` inside a string
+    literal would false-suppress, but that's the same trade-off every
+    other tool using this convention already makes, and matching their
+    exact syntax means a codebase can suppress codehound and flake8/ruff
+    findings side by side on the same line.
+    """
+    suppressed: dict[int, set[str] | None] = {}
+    for lineno, line in enumerate(source.splitlines(), start=1):
+        match = _NOQA_RE.search(line)
+        if match is None:
+            continue
+        codes_text = match.group("codes")
+        if codes_text is None:
+            suppressed[lineno] = None
+        else:
+            codes = {c.strip().upper() for c in re.split(r"[,\s]+", codes_text) if c.strip()}
+            suppressed[lineno] = codes
+    return suppressed
+
+
+def _is_suppressed(finding: Finding, noqa_lines: dict[int, set[str] | None]) -> bool:
+    if finding.line not in noqa_lines:
+        return False
+    codes = noqa_lines[finding.line]
+    return codes is None or finding.code.upper() in codes
+
+
 # --- File discovery and orchestration ---------------------------------------------
 
 
@@ -210,6 +255,41 @@ def scan_file(path: str, checks: list[Check]) -> list[Finding]:
     findings: list[Finding] = []
     for check in checks:
         findings.extend(check.run(tree, parents, path))
+    noqa_lines = _parse_noqa_lines(source)
+    if noqa_lines:
+        findings = [f for f in findings if not _is_suppressed(f, noqa_lines)]
+    return findings
+
+
+def _scan_file_worker(args: tuple[str, list[Check]]) -> list[Finding]:
+    path, checks = args
+    return scan_file(path, checks)
+
+
+def scan_files(
+    paths: list[str],
+    checks: list[Check],
+    workers: int | None = None,
+) -> list[Finding]:
+    """Scan an already-expanded list of file paths (no directory walking),
+    in parallel across a process pool once there are enough files to make
+    that worthwhile - one call, one pool, regardless of how many separate
+    root paths a CLI invocation was given.
+    """
+    if not paths:
+        return []
+    if workers is None:
+        workers = os.cpu_count() or 1
+
+    findings: list[Finding] = []
+    if workers <= 1 or len(paths) < _MIN_FILES_FOR_PARALLEL:
+        for path in paths:
+            findings.extend(scan_file(path, checks))
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            for result in executor.map(_scan_file_worker, [(p, checks) for p in paths]):
+                findings.extend(result)
+    findings.sort(key=lambda f: (f.path, f.line, f.col, f.code))
     return findings
 
 
@@ -217,9 +297,6 @@ def scan_path(
     root: str,
     checks: list[Check],
     skip_dirs: frozenset = DEFAULT_SKIP_DIRS,
+    workers: int | None = None,
 ) -> list[Finding]:
-    findings: list[Finding] = []
-    for path in iter_python_files(root, skip_dirs):
-        findings.extend(scan_file(path, checks))
-    findings.sort(key=lambda f: (f.path, f.line, f.col, f.code))
-    return findings
+    return scan_files(list(iter_python_files(root, skip_dirs)), checks, workers=workers)

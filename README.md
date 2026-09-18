@@ -57,6 +57,8 @@ What actually seems to be missing elsewhere, as far as I've been able to find:
 
 And a difference in kind, not just coverage: every check here is checked against a real corpus, not just reasoned about. [`docs/FINDINGS.md`](docs/FINDINGS.md) has a running ledger of every false positive found while building each check (with the exact framework and line), and two checks that were built, measured, and **rejected outright** when the pattern turned out to be either too common to be a defensible finding (1,911 hits) or premised on something that was actually false (the first two real hits checked turned out to be correct code). I haven't found another static-analysis tool — commercial or open-source — that publishes this kind of "we built it, checked it against real code, and turned it down" ledger. Most tools that market themselves on "catches real bugs" (Greptile, Qodo, CodeRabbit) report an aggregate detection-rate benchmark, not per-rule provenance you can click through to an actual merged fix.
 
+**Closing the "toy project" gaps, honestly.** Ruff is a single, fast binary with editor integrations, a plugin-free config file, autofix, and inline suppression - table stakes for a tool people actually adopt, not just admire. `codehound` isn't going to out-perform a Rust tool by staying pure Python, but it now has the parts of that list that don't require rewriting the whole thing: a `[tool.codehound]` block in `pyproject.toml`, `# noqa`/`# noqa: CH001` inline suppression (same syntax flake8/ruff already use, so it doesn't collide with either), `--fix` for the two checks where the rewrite is genuinely unambiguous (CH017 always, CH004 only inside `async def` - guessing wrong on the rest would be worse than not fixing them), and scanning parallelized across a process pool once there's enough files to make that worth it. Measured, not claimed: a full scan of HuggingFace's `transformers` (thousands of files) went from 57 seconds to 12 - verified byte-identical against the sequential result first, not just "seems faster."
+
 ---
 
 ## Install
@@ -65,7 +67,7 @@ And a difference in kind, not just coverage: every check here is checked against
 pip install codehound
 ```
 
-Zero dependencies — it's ~3,600 lines on top of the standard-library `ast` module, so this installs instantly and runs fully offline, no API key or network call involved.
+Zero dependencies — it's ~4,000 lines on top of the standard-library `ast` module, so this installs instantly and runs fully offline, no API key or network call involved.
 
 <details>
 <summary>From a clone instead (for development)</summary>
@@ -91,12 +93,18 @@ codehound scan file1.py file2.py src/
 # only run specific checks
 codehound scan path/to/project --select CH001,CH006
 
+# also skip extra directories beyond the built-in defaults
+codehound scan path/to/project --exclude migrations,generated
+
 # machine-readable output for CI dashboards
 codehound scan path/to/project --format json
 codehound scan path/to/project --format csv
 
 # GitHub Code Scanning (Security tab) can ingest this directly
 codehound scan path/to/project --format sarif > results.sarif
+
+# rewrite the fixable findings in place, then report what's left
+codehound scan path/to/project --fix
 
 # list every available check
 codehound list
@@ -107,6 +115,32 @@ codehound list
 ```yaml
 - run: codehound scan src   # fails the build on a regression
 ```
+
+A finding you've reviewed and want to keep suppresses the same way flake8/ruff findings do - a trailing `# noqa` (everything on that line) or `# noqa: CH001` (just that code):
+
+```python
+time.sleep(1)  # noqa: CH001 - deliberate; this branch only runs at startup, before the loop exists
+```
+
+### Config file
+
+Drop defaults into `[tool.codehound]` in `pyproject.toml` so you don't have to repeat flags on every invocation - explicit CLI flags always win over these:
+
+```toml
+[tool.codehound]
+select = ["CH001", "CH006"]   # same as --select
+exclude = ["migrations"]      # extra directories to skip, merged with the built-in defaults
+paths = ["src"]                # what `codehound scan` (no path args) scans
+```
+
+Requires Python 3.11+ to load (uses the standard-library `tomllib`) - on 3.9/3.10 the config file is silently skipped and every flag still works exactly the same via the CLI, since nothing about codehound itself depends on being able to read it.
+
+### `--fix`
+
+Only two checks ship an autofix, and deliberately so - every other check either needs a judgment call (is this "leak" actually intentional?) or an import that may or may not already be in scope, and guessing wrong there is worse than just reporting the finding:
+
+- **CH017** - `collections.<ABC>` → `collections.abc.<ABC>`, a pure rename, always safe.
+- **CH004** - `asyncio.get_event_loop()` → `asyncio.get_running_loop()`, but *only* inside an `async def`. Outside one, `get_running_loop()` raises where `get_event_loop()` wouldn't, so those calls are left as detection-only.
 
 ### GitHub Action
 
@@ -126,7 +160,7 @@ Uploads findings to the repo's **Security → Code Scanning** tab via SARIF, in 
 ```yaml
 repos:
   - repo: https://github.com/kratos0718/codehound
-    rev: v1.7.0
+    rev: v1.8.0
     hooks:
       - id: codehound
 ```
@@ -455,9 +489,18 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
       subprocesses, floating timers — CH023-CH028
 - [x] 31 checks — `finally:` blocks that swallow exceptions, `lru_cache`
       on async functions, unclosed `multiprocessing.Pool` — CH029-CH031
+- [x] Inline `# noqa` / `# noqa: CH001` suppression
+- [x] `[tool.codehound]` project config in `pyproject.toml` (`select`,
+      `exclude`, `paths` — Python 3.11+ to load, every flag still works
+      without it on 3.9/3.10)
+- [x] `--fix` — CH017 always, CH004 only inside `async def` (CH002/CH003
+      turned out to need judgment calls or import-injection this tool
+      won't guess at, so they stay detection-only; see docs/ARCHITECTURE.md)
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Extend CH001 to a curated denylist of sync AI/agent SDK client calls inside async functions (vector-DB clients, LLM SDKs) — the gap flake8-async's stdlib-only denylist leaves open
-- [ ] `--fix` for the mechanical rules (CH002, CH003, CH004)
+- [x] Parallelize scanning across files for large codebases — a full
+      HuggingFace transformers scan went from 57s to 12s (measured,
+      byte-identical output verified against the sequential run)
 
 ---
 
