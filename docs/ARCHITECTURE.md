@@ -64,11 +64,14 @@ src/codehound/
 │   ├── is_literal_comparison.py CH025
 │   ├── mutable_class_attribute.py CH026
 │   ├── unwaited_subprocess.py  CH027
-│   └── floating_timer.py       CH028
+│   ├── floating_timer.py       CH028
+│   ├── finally_swallows_exception.py CH029
+│   ├── lru_cache_on_async_function.py CH030
+│   └── unclosed_pool.py        CH031
 └── __init__.py      # public API surface + __version__
 ```
 
-~3,200 lines of source, zero runtime dependencies (standard-library `ast` only).
+~3,600 lines of source, zero runtime dependencies (standard-library `ast` only).
 
 ## The core contract
 
@@ -124,7 +127,7 @@ Three shared predicates are built on top of it:
 3. `scan_path` aggregates and sorts findings by `(path, line, col, code)` so
    output is deterministic — important for diffing in CI.
 
-## The twenty-eight checks
+## The thirty-one checks
 
 | Code | Detects | Key structural test |
 |------|---------|--------------------|
@@ -156,6 +159,9 @@ Three shared predicates are built on top of it:
 | CH026 | class-level mutable default mutated in place via `self.<attr>` | class-body `Name = List/Dict/Set` (or empty factory call), a `self.<attr>` in-place mutation exists, no `self.<attr> = ...` reassignment anywhere in the class |
 | CH027 | `subprocess.Popen(...)` never waited/communicated | assignment from `Popen(...)`, not `with`-managed, no `.wait()`/`.communicate()`, not returned/passed-as-argument/stored-as-attribute |
 | CH028 | `threading.Timer(...)` started, never cancelled | same shape as CH009, `.cancel()` instead of `.join()`, plus `daemon=True` escape; bare `Timer` only trusted with `from threading import Timer` |
+| CH029 | `return`/`break`/`continue` in `finally:` swallows a pending exception | scoped walk of `finalbody` for an escaping `Return`, or a `Break`/`Continue` whose owning loop is outside the `finally:`; skipped entirely when every `except` handler never re-raises |
+| CH030 | `@lru_cache`/`@cache` on `async def` | decorator resolves to `lru_cache`/`cache`, decorated node is an `AsyncFunctionDef` (method or module-level) |
+| CH031 | `multiprocessing.Pool(...)` never closed | same shape as CH005/CH016/CH027/CH028, `.close()`/`.terminate()` instead of `.join()`/`.cancel()` |
 
 Each lives in its own file with a module docstring explaining the bug and a
 real-world example of where it was found.
@@ -237,6 +243,12 @@ suppressions exist specifically to avoid noise:
   `Timer(...)` when `from threading import Timer` was actually seen -
   agno's own unrelated stopwatch class, called as `Timer()` with zero
   arguments, produced ~30 false positives before this guard existed.
+- **CH029** skips a `try` entirely when every `except` handler never
+  re-raises anywhere in its own scope (the same nested-handler-boundary
+  scoping already proven for CH020) - real, found in letta, where
+  `except Exception as e: result["error"] = str(e)` deliberately never
+  propagates, so a `return` in the matching `finally:` has nothing live
+  to discard.
 
 The test suite asserts **both directions** for every rule: the bad pattern *is*
 flagged, and the idiomatic fix is *not*.

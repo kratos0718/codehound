@@ -10,6 +10,7 @@ from codehound.checks.blocking_async import BlockingCallInAsync
 from codehound.checks.collections_abc_import import CollectionsAbcImport
 from codehound.checks.datetime_utcnow import DeprecatedDatetimeUtcnow
 from codehound.checks.discarded_future import DiscardedFuture
+from codehound.checks.finally_swallows_exception import FinallySwallowsException
 from codehound.checks.floating_process import FloatingProcess
 from codehound.checks.floating_task import FloatingTask
 from codehound.checks.floating_thread import FloatingThread
@@ -17,6 +18,7 @@ from codehound.checks.floating_timer import FloatingTimer
 from codehound.checks.get_event_loop import DeprecatedGetEventLoop
 from codehound.checks.is_literal_comparison import IsLiteralComparison
 from codehound.checks.loop_closure_capture import LoopClosureCapture
+from codehound.checks.lru_cache_on_async_function import LruCacheOnAsyncFunction
 from codehound.checks.lru_cache_on_method import LruCacheOnMethod
 from codehound.checks.mutable_class_attribute import MutableClassAttribute
 from codehound.checks.mutable_defaults import MutableDefaultArgument
@@ -26,6 +28,7 @@ from codehound.checks.removed_stdlib_attribute import RemovedStdlibAttribute
 from codehound.checks.removed_stdlib_module import RemovedStdlibModule
 from codehound.checks.resource_leak import UnclosedFileHandle
 from codehound.checks.unawaited_coroutine import UnawaitedCoroutineCall
+from codehound.checks.unclosed_pool import UnclosedPool
 from codehound.checks.unclosed_socket import UnclosedSocket
 from codehound.checks.unittest_deprecated_alias import UnittestDeprecatedAlias
 from codehound.checks.unprotected_lock import UnprotectedLockAcquire
@@ -61,6 +64,9 @@ ALL_CHECKS: list[type[Check]] = [
     MutableClassAttribute,
     UnwaitedSubprocess,
     FloatingTimer,
+    FinallySwallowsException,
+    LruCacheOnAsyncFunction,
+    UnclosedPool,
 ]
 
 

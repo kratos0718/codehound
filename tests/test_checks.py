@@ -1474,3 +1474,236 @@ def test_ch028_ignores_daemon_set_post_construction():
     )
     assert _run(code, ["CH028"]) == []
 
+
+# --- CH029 finally-swallows-exception --------------------------------------------------
+
+
+def test_ch029_flags_return_in_finally():
+    code = "def f():\n    try:\n        raise ValueError()\n    finally:\n        return 5\n"
+    findings = _run(code, ["CH029"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH029"
+
+
+def test_ch029_flags_break_escaping_finally():
+    code = (
+        "def f():\n"
+        "    for i in range(3):\n"
+        "        try:\n"
+        "            raise ValueError()\n"
+        "        finally:\n"
+        "            break\n"
+    )
+    findings = _run(code, ["CH029"])
+    assert len(findings) == 1
+
+
+def test_ch029_flags_continue_escaping_finally():
+    code = (
+        "def f():\n"
+        "    for i in range(3):\n"
+        "        try:\n"
+        "            raise ValueError()\n"
+        "        finally:\n"
+        "            continue\n"
+    )
+    findings = _run(code, ["CH029"])
+    assert len(findings) == 1
+
+
+def test_ch029_ignores_break_local_to_a_loop_inside_finally():
+    # A break inside a loop that itself lives entirely within the
+    # finally block is local to that loop and does not escape - the
+    # pending exception still propagates correctly.
+    code = (
+        "def f():\n"
+        "    try:\n"
+        "        raise ValueError()\n"
+        "    finally:\n"
+        "        for i in range(1):\n"
+        "            break\n"
+    )
+    assert _run(code, ["CH029"]) == []
+
+
+def test_ch029_ignores_normal_finally_cleanup():
+    code = (
+        "def f():\n"
+        "    try:\n"
+        "        risky()\n"
+        "    finally:\n"
+        "        cleanup()\n"
+    )
+    assert _run(code, ["CH029"]) == []
+
+
+def test_ch029_ignores_return_in_try_body():
+    code = "def f():\n    try:\n        return 1\n    finally:\n        cleanup()\n"
+    assert _run(code, ["CH029"]) == []
+
+
+def test_ch029_ignores_return_in_nested_function_inside_finally():
+    code = (
+        "def f():\n"
+        "    try:\n"
+        "        raise ValueError()\n"
+        "    finally:\n"
+        "        def helper():\n"
+        "            return 1\n"
+        "        helper()\n"
+    )
+    assert _run(code, ["CH029"]) == []
+
+
+def test_ch029_ignores_return_when_except_fully_absorbs_and_never_reraises():
+    # Real pattern found in letta: except Exception logs and records the
+    # error into a result dict, deliberately never re-raises (docstring:
+    # "callback failures should not affect job completion") - by the
+    # time finally runs, nothing is pending to swallow.
+    code = (
+        "def f():\n"
+        "    result = {}\n"
+        "    try:\n"
+        "        risky()\n"
+        "    except Exception as e:\n"
+        "        result['error'] = str(e)\n"
+        "    finally:\n"
+        "        return result\n"
+    )
+    assert _run(code, ["CH029"]) == []
+
+
+def test_ch029_still_flags_return_when_except_reraises():
+    # Real pattern found in letta: the except handler logs, then
+    # re-raises (or raises a wrapped error) - the finally's return still
+    # discards that live, in-flight exception.
+    code = (
+        "def f():\n"
+        "    try:\n"
+        "        risky()\n"
+        "    except Exception as e:\n"
+        "        log(e)\n"
+        "        raise\n"
+        "    finally:\n"
+        "        return None\n"
+    )
+    findings = _run(code, ["CH029"])
+    assert len(findings) == 1
+
+
+def test_ch029_still_flags_return_when_no_except_at_all():
+    code = "def f():\n    try:\n        raise ValueError()\n    finally:\n        return 5\n"
+    findings = _run(code, ["CH029"])
+    assert len(findings) == 1
+
+
+def test_ch029_still_flags_when_one_of_several_handlers_reraises():
+    code = (
+        "def f():\n"
+        "    try:\n"
+        "        risky()\n"
+        "    except ValueError:\n"
+        "        pass\n"
+        "    except TypeError:\n"
+        "        raise\n"
+        "    finally:\n"
+        "        return None\n"
+    )
+    findings = _run(code, ["CH029"])
+    assert len(findings) == 1
+
+
+# --- CH030 lru-cache-on-async-function --------------------------------------------------
+
+
+def test_ch030_flags_lru_cache_on_module_level_async_function():
+    code = "from functools import lru_cache\n@lru_cache\nasync def fetch(x):\n    return x\n"
+    findings = _run(code, ["CH030"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH030"
+
+
+def test_ch030_flags_cache_decorator_call_form_on_async_method():
+    code = (
+        "import functools\n"
+        "class C:\n"
+        "    @functools.lru_cache(maxsize=128)\n"
+        "    async def fetch(self, x):\n"
+        "        return x\n"
+    )
+    findings = _run(code, ["CH030"])
+    assert len(findings) == 1
+
+
+def test_ch030_ignores_lru_cache_on_sync_function():
+    code = "from functools import lru_cache\n@lru_cache\ndef compute(x):\n    return x\n"
+    assert _run(code, ["CH030"]) == []
+
+
+def test_ch030_ignores_uncached_async_function():
+    code = "async def fetch(x):\n    return x\n"
+    assert _run(code, ["CH030"]) == []
+
+
+# --- CH031 unclosed-pool -----------------------------------------------------------------
+
+
+def test_ch031_flags_pool_never_closed():
+    code = (
+        "import multiprocessing\n"
+        "def run():\n"
+        "    pool = multiprocessing.Pool(4)\n"
+        "    pool.map(f, items)\n"
+    )
+    findings = _run(code, ["CH031"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH031"
+
+
+def test_ch031_ignores_pool_with_context_manager():
+    code = (
+        "import multiprocessing\n"
+        "def run():\n"
+        "    with multiprocessing.Pool(4) as pool:\n"
+        "        pool.map(f, items)\n"
+    )
+    assert _run(code, ["CH031"]) == []
+
+
+def test_ch031_ignores_pool_with_close_call():
+    code = (
+        "import multiprocessing\n"
+        "def run():\n"
+        "    pool = multiprocessing.Pool(4)\n"
+        "    pool.map(f, items)\n"
+        "    pool.close()\n"
+        "    pool.join()\n"
+    )
+    assert _run(code, ["CH031"]) == []
+
+
+def test_ch031_ignores_pool_with_terminate_call():
+    code = (
+        "import multiprocessing\n"
+        "def run():\n"
+        "    pool = multiprocessing.Pool(4)\n"
+        "    pool.map(f, items)\n"
+        "    pool.terminate()\n"
+    )
+    assert _run(code, ["CH031"]) == []
+
+
+def test_ch031_ignores_pool_returned_to_caller():
+    code = "import multiprocessing\ndef run():\n    pool = multiprocessing.Pool(4)\n    return pool\n"
+    assert _run(code, ["CH031"]) == []
+
+
+def test_ch031_ignores_pool_stored_as_attribute():
+    code = (
+        "import multiprocessing\n"
+        "def run(obj):\n"
+        "    pool = multiprocessing.Pool(4)\n"
+        "    obj.pool = pool\n"
+    )
+    assert _run(code, ["CH031"]) == []
+

@@ -4,7 +4,7 @@
 
 <h1 align="center">codehound</h1>
 
-**An AST-based static analyzer that hunts *real* bugs in large Python codebases — twenty-eight checks, eight backed by a bug that was actually found and merged (or opened as a PR) into a major open-source AI framework, the rest hardening rules verified against real false positives across a ~29-framework validation corpus instead of just reasoned about.**
+**An AST-based static analyzer that hunts *real* bugs in large Python codebases — thirty-one checks, eight backed by a bug that was actually found and merged (or opened as a PR) into a major open-source AI framework, the rest hardening rules verified against real false positives across a ~29-framework validation corpus instead of just reasoned about.**
 
 [![CI](https://github.com/kratos0718/codehound/actions/workflows/ci.yml/badge.svg)](https://github.com/kratos0718/codehound/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/codehound.svg)](https://pypi.org/project/codehound/)
@@ -45,13 +45,27 @@ I was contributing bug fixes to large AI frameworks and noticed the same handful
 
 ---
 
+## How this compares
+
+Being upfront about overlap: `codehound` is not the only tool that catches some of these patterns, and pretending otherwise wouldn't survive five minutes of someone actually checking. [Ruff](https://docs.astral.sh/ruff/)'s `RUF006` already catches a discarded `asyncio.create_task()` (CH006), `flake8-async`'s `ASYNC300` predates it. Ruff's `RUF012` already catches mutable class-level defaults (CH026), `F632` catches `is`-literal comparisons (CH025), `B006`/`UP005`/`E722` cover mutable-default-arguments/deprecated-unittest-aliases/bare-except (CH002/CH024/CH020). Pylint's `W1518` (`method-cache-max-size-none`) is close to a name-for-name match for CH011's `lru_cache`-on-instance-method leak. If you already run ruff and pylint, several of `codehound`'s checks will feel familiar.
+
+What actually seems to be missing elsewhere, as far as I've been able to find:
+
+- **Floating threading/multiprocessing primitives.** `flake8-async`'s blocking-call rules (`ASYNC2xx`) and Ruff's `RUF006` cover `asyncio` specifically; I couldn't find any linter — Ruff, flake8-async, pylint, bandit — that flags a `threading.Thread`/`multiprocessing.Process`/`threading.Timer`/`multiprocessing.Pool` that's started but never joined, cancelled, or closed (CH009, CH012, CH028, CH031). This isn't a niche pattern; it's the exact same bug as the asyncio case, just one abstraction layer down, and nothing else checks for it.
+- **Unawaited coroutines.** Calling an `async def` function as a bare statement — no `await`, no scheduling — silently drops the whole call (CH007). Ruff has an [open, unresolved issue](https://github.com/astral-sh/ruff/issues/9833) asking for exactly this; as of writing, nothing ships it.
+- **Blocking calls to non-stdlib clients inside async functions.** `flake8-async`'s `ASYNC2xx` family only recognizes a fixed denylist (`requests`, `httpx`, `urllib3`, `subprocess`, `open`, `time.sleep`) — a synchronous call to a vector-DB client, an LLM SDK, or any other third-party library inside an `async def` isn't on anyone's list yet. CH001 is on that same denylist today; extending it to common AI/agent SDKs (the exact libraries the frameworks this tool is validated against actually use) is on the roadmap below.
+
+And a difference in kind, not just coverage: every check here is checked against a real corpus, not just reasoned about. [`docs/FINDINGS.md`](docs/FINDINGS.md) has a running ledger of every false positive found while building each check (with the exact framework and line), and two checks that were built, measured, and **rejected outright** when the pattern turned out to be either too common to be a defensible finding (1,911 hits) or premised on something that was actually false (the first two real hits checked turned out to be correct code). I haven't found another static-analysis tool — commercial or open-source — that publishes this kind of "we built it, checked it against real code, and turned it down" ledger. Most tools that market themselves on "catches real bugs" (Greptile, Qodo, CodeRabbit) report an aggregate detection-rate benchmark, not per-rule provenance you can click through to an actual merged fix.
+
+---
+
 ## Install
 
 ```bash
 pip install codehound
 ```
 
-Zero dependencies — it's ~3,200 lines on top of the standard-library `ast` module, so this installs instantly and runs fully offline, no API key or network call involved.
+Zero dependencies — it's ~3,600 lines on top of the standard-library `ast` module, so this installs instantly and runs fully offline, no API key or network call involved.
 
 <details>
 <summary>From a clone instead (for development)</summary>
@@ -112,7 +126,7 @@ Uploads findings to the repo's **Security → Code Scanning** tab via SARIF, in 
 ```yaml
 repos:
   - repo: https://github.com/kratos0718/codehound
-    rev: v1.6.0
+    rev: v1.7.0
     hooks:
       - id: codehound
 ```
@@ -151,10 +165,13 @@ repos:
 | **CH026** | `mutable-class-attribute` | `class C: items = []` mutated via `self.items.append(...)` without ever being reassigned per instance — every instance shares and mutates the *same* list. | **vllm**, **llama_index**, **optuna**, **transformers** — see below |
 | **CH027** | `unwaited-subprocess` | `subprocess.Popen(...)` never `.wait()`ed/`.communicate()`d with, and not context-managed — risks a zombie process and a full pipe buffer deadlocking the child. | hardening rule — real hit in dspy (already handled, see below) |
 | **CH028** | `floating-timer` | `threading.Timer(...)` started but never `.cancel()`ed or handed off — nothing can stop the callback from firing later, on stale context. | hardening rule — real hits in marimo, transformers |
+| **CH029** | `finally-swallows-exception` | `return`/`break`/`continue` in a `finally:` block silently discards any exception from the `try:` — the caller never sees it. | hardening rule — real hits in letta |
+| **CH030** | `lru-cache-on-async-function` | `@lru_cache`/`@cache` on `async def` caches the coroutine *object*, not its result — the second call with the same arguments crashes. | hardening rule |
+| **CH031** | `unclosed-pool` | `multiprocessing.Pool()` never `.close()`d/`.terminate()`d — worker processes leak for the life of the parent. | hardening rule |
 
 `codehound list` prints this from the source of truth.
 
-CH007-CH028 don't have found-and-merged bugs behind all of them the way
+CH007-CH031 don't have found-and-merged bugs behind all of them the way
 CH001-CH006 do - most are hardening rules for well-known Python
 correctness gotchas rather than something this project personally
 tracked down first. CH010 and CH011 are the exceptions: both found
@@ -311,6 +328,25 @@ a real hand-off to a different object, reaped later through a separate
 `terminate_process(lm.process)` call, the same "stored as any object's
 attribute" escape CH009/CH016/CH028 already needed. Added it.
 
+**CH029 found a real bug in letta on day one, and its own precision gap
+right after.** The first corpus scan flagged `except Exception as e:
+result["error"] = str(e)` followed by `finally: return result` in
+letta's job-callback dispatcher - but that except deliberately never
+re-raises (the code comment says so directly: "callback failures should
+not affect job completion"), so nothing is actually pending to swallow
+by the time `finally` runs. Fixed by skipping a `try` whose `except`
+clauses never re-raise anywhere in their own scope - there's nothing
+live left to discard at that point. The same scan also turned up a
+*more serious*, still-real instance in two of letta's LLM streaming
+adapters: `except BaseException: <log, then re-raise a typed error>`
+immediately followed by `finally: if not stream_started: return` -
+except `stream_started` is unconditionally set `True` a few lines
+earlier with no other assignment anywhere in the function, so today
+that specific `return` is dead code, not a currently-live swallow. Read
+carefully rather than assumed, and not filed as a bug report since it
+isn't actually firing right now - but flagged as exactly the kind of
+fragile code a future refactor could silently turn into a real one.
+
 **Two checks we built and did not ship.** `exception-chaining` (`except X
 as e: raise Y(...)` with no `from e`, discarding the real traceback -
 overlaps flake8-bugbear B904) worked exactly as designed, but at a scale
@@ -374,12 +410,15 @@ codehound/
     ├── is_literal_comparison.py (CH025)
     ├── mutable_class_attribute.py (CH026)
     ├── unwaited_subprocess.py  (CH027)
-    └── floating_timer.py       (CH028)
+    ├── floating_timer.py       (CH028)
+    ├── finally_swallows_exception.py (CH029)
+    ├── lru_cache_on_async_function.py (CH030)
+    └── unclosed_pool.py        (CH031)
 ```
 
 Each check receives a parsed `ast` tree plus the precomputed parent map and returns `Finding`s. Adding a rule is one file + one registry line + a test. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a full walkthrough of the engine, the parent map, and the design decisions.
 
-**False-positive discipline is a feature.** CH005 won't flag a handle that's `return`ed (the caller owns it) or explicitly `.close()`d. CH006 won't flag `TaskGroup.create_task` (the group holds the reference). CH001 only fires when the *enclosing* function is `async`. CH007 scopes `self.foo()` matches to async methods on the *same* class as the call site, and bare `foo()` matches to module-level async functions that aren't shadowed by a same-named parameter. CH009 doesn't flag a thread handed off as *any* object's attribute, not just `self`. CH010 only fires when a lambda is directly stored (appended, assigned, returned), not merely passed as a callback argument that gets consumed on the spot. CH016 doesn't flag a socket returned as part of a tuple/list, or passed as an argument to any call (as opposed to being the receiver of a call on itself) — real patterns found in vllm's rendezvous code. CH020 won't flag a `BaseException` handler whose bound name is actually referenced, or whose body re-raises anywhere in its own scope (not counting a nested try/except's own handler) — both real patterns found in agno. CH021 doesn't flag a relative import (`node.level != 0`) of a same-named local module, or an import already inside a `try:`/`except ImportError:` fallback — real patterns found in vllm and agno respectively. CH025 pairs each chained comparison's op with only its own adjacent operands, rather than matching a literal and an `is`/`is not` anywhere in the same chain independently — a real pattern found in litellm. CH027 and CH028 both recognize a handle stored as *any* object's attribute as a hand-off, matching CH009/CH016's precedent — real patterns found in dspy and weaviate-python-client respectively. CH028 also only trusts a bare `Timer(...)` when `from threading import Timer` was actually seen — real hits in agno were its own unrelated stopwatch class. All of those guards exist because of real false positives caught while building the checks (see above and [`docs/FINDINGS.md`](docs/FINDINGS.md)). The test suite asserts both "bad code is flagged" and "correct code is not."
+**False-positive discipline is a feature.** CH005 won't flag a handle that's `return`ed (the caller owns it) or explicitly `.close()`d. CH006 won't flag `TaskGroup.create_task` (the group holds the reference). CH001 only fires when the *enclosing* function is `async`. CH007 scopes `self.foo()` matches to async methods on the *same* class as the call site, and bare `foo()` matches to module-level async functions that aren't shadowed by a same-named parameter. CH009 doesn't flag a thread handed off as *any* object's attribute, not just `self`. CH010 only fires when a lambda is directly stored (appended, assigned, returned), not merely passed as a callback argument that gets consumed on the spot. CH016 doesn't flag a socket returned as part of a tuple/list, or passed as an argument to any call (as opposed to being the receiver of a call on itself) — real patterns found in vllm's rendezvous code. CH020 won't flag a `BaseException` handler whose bound name is actually referenced, or whose body re-raises anywhere in its own scope (not counting a nested try/except's own handler) — both real patterns found in agno. CH021 doesn't flag a relative import (`node.level != 0`) of a same-named local module, or an import already inside a `try:`/`except ImportError:` fallback — real patterns found in vllm and agno respectively. CH025 pairs each chained comparison's op with only its own adjacent operands, rather than matching a literal and an `is`/`is not` anywhere in the same chain independently — a real pattern found in litellm. CH027 and CH028 both recognize a handle stored as *any* object's attribute as a hand-off, matching CH009/CH016's precedent — real patterns found in dspy and weaviate-python-client respectively. CH028 also only trusts a bare `Timer(...)` when `from threading import Timer` was actually seen — real hits in agno were its own unrelated stopwatch class. CH029 skips a `try` whose `except` clauses never re-raise anywhere in their own scope — a real pattern in letta where the exception is deliberately logged and recorded, never propagated, so a `return` in `finally` isn't discarding anything live. All of those guards exist because of real false positives caught while building the checks (see above and [`docs/FINDINGS.md`](docs/FINDINGS.md)). The test suite asserts both "bad code is flagged" and "correct code is not."
 
 ---
 
@@ -414,8 +453,10 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
 - [x] 28 checks — removed stdlib functions, deprecated unittest aliases,
       `is`-literal comparisons, mutable class attributes, unwaited
       subprocesses, floating timers — CH023-CH028
+- [x] 31 checks — `finally:` blocks that swallow exceptions, `lru_cache`
+      on async functions, unclosed `multiprocessing.Pool` — CH029-CH031
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
-- [ ] Sync HTTP clients constructed inside async request handlers
+- [ ] Extend CH001 to a curated denylist of sync AI/agent SDK client calls inside async functions (vector-DB clients, LLM SDKs) — the gap flake8-async's stdlib-only denylist leaves open
 - [ ] `--fix` for the mechanical rules (CH002, CH003, CH004)
 
 ---

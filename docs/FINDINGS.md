@@ -1,14 +1,14 @@
 # Findings in the wild
 
-Eight of the twenty-eight `codehound` rules were distilled from a bug
+Eight of the thirty-one `codehound` rules were distilled from a bug
 found in a real, widely-used open-source project, with the fix submitted
-as a pull request. The rest (CH007-CH009, CH012-CH028) are hardening
+as a pull request. The rest (CH007-CH009, CH012-CH031) are hardening
 rules verified through real false positives against a ~29-framework
 validation corpus instead of a found-and-merged bug - see "Notes on
-precision" below for why, and what that absence itself says. CH026 is a
-partial exception: it found four real, previously-unreported bugs on its
-first scan, but none have a PR yet - see "Real bugs found, not yet
-filed" below.
+precision" below for why, and what that absence itself says. CH026 and
+CH029 are partial exceptions: both found real, previously-unreported
+bugs on their first scan, but not all of them have a PR yet - see "Real
+bugs found, not yet filed" below.
 
 | Rule | Project | ⭐ | The bug | Fix |
 |------|---------|----|---------|-----|
@@ -259,6 +259,25 @@ the false positives a naive grep would have reported:
   imported it - minutes earlier in the same session; CH028 just didn't
   apply it the first time. Fixed by requiring `from threading import
   Timer` before trusting a bare `Timer(...)` call.
+- **CH029, a real find that revealed a real precision gap** — the first
+  corpus scan flagged letta's `_dispatch_callback`: `except Exception as
+  e: result["error"] = str(e)` followed by `finally: return result`.
+  Read the code before trusting the check: the comment right there says
+  "callback failures should not affect job completion," and the handler
+  genuinely never re-raises anywhere - by the time `finally` runs, the
+  exception (if any) has already been fully absorbed, so the `return`
+  isn't discarding anything live. Fixed by skipping a `try` whose
+  `except` clauses never re-raise in their own scope (reusing the exact
+  nested-handler-boundary walk built for CH020's `raise`-detection).
+  Verified the guard doesn't over-suppress by checking a second letta
+  hit that *does* re-raise (`except BaseException as e: <log>; raise
+  self.llm_client.handle_llm_error(e, ...)` then `finally: if not
+  stream_started: return`) - still flagged after the fix, though a
+  closer read showed `stream_started` is unconditionally `True` with no
+  other assignment in the function, making that specific `return`
+  currently dead code rather than a live swallow. Recorded honestly
+  rather than reported as an active bug - see "Real bugs found, not yet
+  filed" below for the full letta story.
 
 These are why the test suite asserts *both* directions: bad code flagged, good code
 left alone.
@@ -332,6 +351,33 @@ Two more real bugs found the same way, in different checks:
   session's environment could exercise. Not filed, since the discipline
   this whole project holds itself to is verifying a fix before shipping
   it, not just reasoning that it's obviously correct.
+- **CH029 (`finally-swallows-exception`) in letta - a mixed, honestly
+  reported result.** The first corpus scan found 9 hits across 5 files.
+  Two, in `letta_llm_stream_adapter.py` and `simple_llm_stream_adapter.py`,
+  are byte-identical: `except BaseException as e: <log, then raise a
+  typed error>` followed by `finally: if not stream_started: return`.
+  The pattern is real and the concern is legitimate, but tracing
+  `stream_started` shows it's assigned exactly once, unconditionally, to
+  `True`, a few lines before the `try` - there's no other assignment
+  anywhere in the function, so the `if not stream_started:` guard is
+  currently always false and the `return` never actually executes. Not
+  a live bug today, but exactly the kind of fragile code that becomes
+  one the moment someone adds an early-return path before that
+  assignment, without ever touching the `finally:` block that would
+  then start silently eating errors. A third hit, in
+  `letta_agent.py`'s step-processing loop (`finally: if step_progression
+  == StepProgression.FINISHED and should_continue: continue`, right
+  after an except block that logs an error stop reason and explicitly
+  `raise`s it), looks like a real, live instance of the same class of
+  bug, but confirming that requires understanding a large agent-loop
+  state machine well enough to know whether that specific combination
+  of flags is actually reachable while an exception is in flight - more
+  than could be verified with confidence in the time available. None of
+  the 9 filed as a PR: the two adapter hits aren't currently live, and
+  the agent-loop hit needs more investigation than a quick read
+  supports before claiming it's a bug rather than reasoning about a
+  pattern - the same "verify before build" bar this project applies to
+  its own checks now applied to using them.
 
 ## Bugs the tool found on its own
 
