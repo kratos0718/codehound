@@ -10,6 +10,8 @@ from codehound.checks.blocking_async import BlockingCallInAsync
 from codehound.checks.collections_abc_import import CollectionsAbcImport
 from codehound.checks.datetime_utcnow import DeprecatedDatetimeUtcnow
 from codehound.checks.discarded_future import DiscardedFuture
+from codehound.checks.empty_except_tuple import EmptyExceptTuple
+from codehound.checks.environ_reassignment import EnvironReassignment
 from codehound.checks.finally_swallows_exception import FinallySwallowsException
 from codehound.checks.floating_process import FloatingProcess
 from codehound.checks.floating_task import FloatingTask
@@ -23,6 +25,7 @@ from codehound.checks.lru_cache_on_method import LruCacheOnMethod
 from codehound.checks.mutable_class_attribute import MutableClassAttribute
 from codehound.checks.mutable_defaults import MutableDefaultArgument
 from codehound.checks.nondeterministic_default import NondeterministicDefault
+from codehound.checks.raise_literal import RaiseLiteral
 from codehound.checks.removed_asyncio_task_methods import RemovedAsyncioTaskMethods
 from codehound.checks.removed_getargspec import RemovedGetargspec
 from codehound.checks.removed_stdlib_attribute import RemovedStdlibAttribute
@@ -71,6 +74,9 @@ ALL_CHECKS: list[type[Check]] = [
     UnclosedPool,
     NondeterministicDefault,
     StripMultichar,
+    RaiseLiteral,
+    EmptyExceptTuple,
+    EnvironReassignment,
 ]
 
 

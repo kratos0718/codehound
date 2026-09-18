@@ -1873,3 +1873,113 @@ def test_ch033_flags_argument_with_letters_even_with_punctuation():
     findings = _run(code, ["CH033"])
     assert len(findings) == 1
 
+
+# --- CH034 raise-literal -----------------------------------------------------------------
+
+
+def test_ch034_flags_raise_string_literal():
+    code = "raise 'some error'\n"
+    findings = _run(code, ["CH034"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH034"
+
+
+def test_ch034_flags_raise_fstring():
+    code = "x = 1\nraise f'boom {x}'\n"
+    findings = _run(code, ["CH034"])
+    assert len(findings) == 1
+
+
+def test_ch034_flags_raise_none():
+    code = "raise None\n"
+    findings = _run(code, ["CH034"])
+    assert len(findings) == 1
+
+
+def test_ch034_flags_raise_tuple_literal():
+    code = "raise (1, 2)\n"
+    findings = _run(code, ["CH034"])
+    assert len(findings) == 1
+
+
+def test_ch034_flags_raise_dict_literal():
+    code = "raise {'error': 'bad'}\n"
+    findings = _run(code, ["CH034"])
+    assert len(findings) == 1
+
+
+def test_ch034_ignores_raise_exception_instance():
+    code = "raise ValueError('bad input')\n"
+    assert _run(code, ["CH034"]) == []
+
+
+def test_ch034_ignores_bare_reraise():
+    code = "try:\n    pass\nexcept Exception:\n    raise\n"
+    assert _run(code, ["CH034"]) == []
+
+
+def test_ch034_ignores_raise_from_variable():
+    code = "def f(exc):\n    raise exc\n"
+    assert _run(code, ["CH034"]) == []
+
+
+# --- CH035 empty-except-tuple -------------------------------------------------------------
+
+
+def test_ch035_flags_empty_except_tuple():
+    code = "try:\n    pass\nexcept ():\n    pass\n"
+    findings = _run(code, ["CH035"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH035"
+
+
+def test_ch035_ignores_single_exception_type():
+    code = "try:\n    pass\nexcept ValueError:\n    pass\n"
+    assert _run(code, ["CH035"]) == []
+
+
+def test_ch035_ignores_nonempty_exception_tuple():
+    code = "try:\n    pass\nexcept (ValueError, TypeError):\n    pass\n"
+    assert _run(code, ["CH035"]) == []
+
+
+def test_ch035_ignores_bare_except():
+    code = "try:\n    pass\nexcept:\n    pass\n"
+    assert _run(code, ["CH035"]) == []
+
+
+# --- CH036 environ-reassignment -----------------------------------------------------------
+
+
+def test_ch036_flags_direct_environ_reassignment():
+    code = "import os\nos.environ = {}\n"
+    findings = _run(code, ["CH036"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH036"
+
+
+def test_ch036_flags_environ_reassignment_from_snapshot():
+    code = "import os\nsaved = os.environ.copy()\nos.environ = saved\n"
+    findings = _run(code, ["CH036"])
+    assert len(findings) == 1
+
+
+def test_ch036_ignores_environ_item_assignment():
+    code = "import os\nos.environ['KEY'] = 'value'\n"
+    assert _run(code, ["CH036"]) == []
+
+
+def test_ch036_ignores_environ_clear():
+    code = "import os\nos.environ.clear()\n"
+    assert _run(code, ["CH036"]) == []
+
+
+def test_ch036_ignores_environ_update():
+    code = "import os\nos.environ.update({'KEY': 'value'})\n"
+    assert _run(code, ["CH036"]) == []
+
+
+def test_ch036_ignores_unrelated_attribute_named_environ():
+    code = "config.environ = {}\n"
+    assert _run(code, ["CH036"]) == []
+

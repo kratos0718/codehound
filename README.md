@@ -4,7 +4,7 @@
 
 <h1 align="center">codehound</h1>
 
-**An AST-based static analyzer that hunts *real* bugs in large Python codebases — thirty-three checks, eight backed by a bug that was actually found and merged (or opened as a PR) into a major open-source AI framework, the rest hardening rules verified against real false positives across a ~29-framework validation corpus instead of just reasoned about.**
+**An AST-based static analyzer that hunts *real* bugs in large Python codebases — thirty-six checks, eight backed by a bug that was actually found and merged (or opened as a PR) into a major open-source AI framework, the rest hardening rules verified against real false positives across a ~29-framework validation corpus instead of just reasoned about.**
 
 [![CI](https://github.com/kratos0718/codehound/actions/workflows/ci.yml/badge.svg)](https://github.com/kratos0718/codehound/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/codehound.svg)](https://pypi.org/project/codehound/)
@@ -49,11 +49,12 @@ I was contributing bug fixes to large AI frameworks and noticed the same handful
 
 Being upfront about overlap: `codehound` is not the only tool that catches some of these patterns, and pretending otherwise wouldn't survive five minutes of someone actually checking. [Ruff](https://docs.astral.sh/ruff/)'s `RUF006` already catches a discarded `asyncio.create_task()` (CH006), `flake8-async`'s `ASYNC300` predates it. Ruff's `RUF012` already catches mutable class-level defaults (CH026), `F632` catches `is`-literal comparisons (CH025), `B006`/`UP005`/`E722` cover mutable-default-arguments/deprecated-unittest-aliases/bare-except (CH002/CH024/CH020). Pylint's `W1518` (`method-cache-max-size-none`) is close to a name-for-name match for CH011's `lru_cache`-on-instance-method leak. flake8-bugbear's `B012` also overlaps with CH029 (`return`/`break`/`continue` in `finally:`), though CH029 is narrower — bugbear also flags a bare `continue` inside a `finally:` loop body, which this project hasn't verified has the same swallowed-exception risk in every case. If you already run ruff and pylint, several of `codehound`'s checks will feel familiar.
 
-Three checks are explicit adaptations of a flake8-bugbear idea, kept deliberately narrower than the source rule after checking where the broader version's false-positive risk actually lands:
+Six checks are explicit adaptations of a flake8-bugbear idea. Three are kept deliberately narrower than the source rule after checking where the broader version's false-positive risk actually lands; three others (`B016`, `B029`, `B003`) are ported close to as-is because the underlying bug has no narrower/broader version to weigh — it's a fixed fact about the language, true in every version of Python 3, with no configuration or heuristic to get wrong:
 
 - **CH010** extends to cover a nested `def` capturing a loop variable, the same shape bugbear's `B023` covers alongside its lambda case — the same storage-based precision guard (only fires if the function is actually stored past the iteration) applies to both.
 - **CH032** takes bugbear's `B008` idea — "a call as a default argument is suspicious" — and narrows it to a curated list of ten functions (`time.time`, `datetime.now`, `random.random`, `uuid.uuid4`, …) whose result is *never* sensibly the same across calls. B008 as written also flags `def f(x=some_factory()):`, which is frequently a deliberate compute-once memoization; that ambiguity is exactly why this project didn't just port the broader rule.
 - **CH033** takes `B005`'s "`.strip()` with a multi-character argument is misleading" and adds one precision pass B005 doesn't: skip the argument entirely when it contains no letter or digit. Scanning ~30 real frameworks turned up over a hundred multi-character `.strip()` calls, and the overwhelming majority — `.strip('\r\n')`, `.strip('[]')`, `.strip('\'"')`, box-drawing tree glyphs — were deliberate, correct uses of the character-*set* semantics, not the substring mistake the rule exists to catch. Only the argument that reads as a word or token (`data:`, `/v1`, `THREAD#`) is the real bug; a bag of punctuation isn't. Full before/after counts in [`docs/FINDINGS.md`](docs/FINDINGS.md).
+- **CH034** (`B016`) — `raise <literal>` always raises a different, unrelated `TypeError` instead of the exception the author wrote. **CH035** (`B029`) — `except ():` can never match anything; the handler is dead code. **CH036** (`B003`) — `os.environ = {...}` rebinds the name without calling `putenv`/`unsetenv`, so the real process environment silently doesn't change. All three verified directly in a REPL before writing any AST code (`docs/FINDINGS.md` has the exact repro for each), and all three have zero false-positive risk: there's no legitimate Python where raising a literal succeeds, an empty exception tuple catches something, or reassigning `os.environ` actually syncs the environment.
 
 What actually seems to be missing elsewhere, as far as I've been able to find:
 
@@ -73,7 +74,7 @@ And a difference in kind, not just coverage: every check here is checked against
 pip install codehound
 ```
 
-Zero dependencies — it's ~4,300 lines on top of the standard-library `ast` module, so this installs instantly and runs fully offline, no API key or network call involved.
+Zero dependencies — it's ~4,450 lines on top of the standard-library `ast` module, so this installs instantly and runs fully offline, no API key or network call involved.
 
 <details>
 <summary>From a clone instead (for development)</summary>
@@ -166,7 +167,7 @@ Uploads findings to the repo's **Security → Code Scanning** tab via SARIF, in 
 ```yaml
 repos:
   - repo: https://github.com/kratos0718/codehound
-    rev: v1.9.0
+    rev: v1.10.0
     hooks:
       - id: codehound
 ```
@@ -210,6 +211,9 @@ repos:
 | **CH031** | `unclosed-pool` | `multiprocessing.Pool()` never `.close()`d/`.terminate()`d — worker processes leak for the life of the parent. | hardening rule |
 | **CH032** | `nondeterministic-default-argument` | A default argument computed from `time.time()`/`datetime.now()`/`random.random()`/`uuid.uuid4()` etc. — evaluated once at definition time, so every call using the default gets the *same* value forever. (inspired by flake8-bugbear B008, narrowed to a curated function list — see below) | hardening rule — real hit in litellm (`BudgetManager.create_budget`'s `created_at=time.time()` default) |
 | **CH033** | `strip-multichar-argument` | `.strip()`/`.lstrip()`/`.rstrip()` called with a multi-character string that contains a letter or digit — `str.strip(chars)` removes any of those *characters*, not the substring, from each end. (inspired by flake8-bugbear B005, narrowed to skip punctuation-only character sets — see below) | hardening rule — real hit in huggingface_hub (SSE parsing: `line.lstrip("data:").rstrip("/n")`, the second almost certainly meant `"\n"`) |
+| **CH034** | `raise-literal` | `raise "some error"` / `raise None` / `raise (1, 2)` — raising anything that isn't an exception instance always fails with a *different*, unrelated `TypeError` at the exact moment something has already gone wrong. (flake8-bugbear B016) | hardening rule — real hit in llama_index (an `ImportError` fallback that raises a bare string instead) |
+| **CH035** | `empty-except-tuple` | `except ():` — an empty tuple matches nothing, so the handler can never run; every exception still propagates past it. (flake8-bugbear B029) | hardening rule — zero corpus hits (see below) |
+| **CH036** | `environ-reassignment` | `os.environ = {...}` rebinds the name but doesn't call `putenv`/`unsetenv` — the real process environment (what child processes and C-level `getenv` see) stays unchanged. (flake8-bugbear B003) | hardening rule — real hit in HuggingFace `datasets` (a multiprocessing restore that silently doesn't reach spawned worker processes) |
 
 `codehound list` prints this from the source of truth.
 
@@ -510,6 +514,9 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
 - [x] 33 checks — nested-`def` loop-closure capture alongside lambdas
       (CH010, same shape as bugbear's B023), nondeterministic default
       arguments, multi-character `.strip()` arguments — CH032-CH033
+- [x] 36 checks — raising a literal instead of an exception, an empty
+      `except ()` tuple that can never match, direct `os.environ`
+      reassignment that doesn't sync the real environment — CH034-CH036
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Extend CH001 to a curated denylist of sync AI/agent SDK client calls inside async functions (vector-DB clients, LLM SDKs) — the gap flake8-async's stdlib-only denylist leaves open
 

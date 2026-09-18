@@ -72,11 +72,14 @@ src/codehound/
 │   ├── lru_cache_on_async_function.py CH030
 │   ├── unclosed_pool.py        CH031
 │   ├── nondeterministic_default.py CH032
-│   └── strip_multichar.py      CH033
+│   ├── strip_multichar.py      CH033
+│   ├── raise_literal.py        CH034
+│   ├── empty_except_tuple.py   CH035
+│   └── environ_reassignment.py CH036
 └── __init__.py      # public API surface + __version__
 ```
 
-~4,300 lines of source, zero runtime dependencies (standard-library `ast` only).
+~4,450 lines of source, zero runtime dependencies (standard-library `ast` only).
 
 ## The core contract
 
@@ -214,7 +217,7 @@ HuggingFace's `transformers` produced byte-identical output at `workers=1`
 and at the default worker count, while cutting wall-clock time from 57
 seconds to 12.
 
-## The thirty-three checks
+## The thirty-six checks
 
 | Code | Detects | Key structural test |
 |------|---------|--------------------|
@@ -251,6 +254,9 @@ seconds to 12.
 | CH031 | `multiprocessing.Pool(...)` never closed | same shape as CH005/CH016/CH027/CH028, `.close()`/`.terminate()` instead of `.join()`/`.cancel()` |
 | CH032 | default argument evaluates a nondeterministic call (`time.time()`, `random.random()`, `uuid.uuid4()`, …) | default value (positional or keyword-only) is a `Call` whose `(module, attribute)` pair is in a curated set of ten always-changes-per-call functions |
 | CH033 | `.strip()`/`.lstrip()`/`.rstrip()` argument reads as a substring, not a character set | single string-literal argument, length > 1, more than one distinct character, and at least one character is alphanumeric |
+| CH034 | `raise` with a literal instead of an exception instance | `Raise.exc` is a `Constant`/`JoinedStr`/`List`/`Dict`/`Set`/`Tuple` node |
+| CH035 | `except ():` matches nothing | `ExceptHandler.type` is a `Tuple` with zero elements |
+| CH036 | direct assignment to `os.environ` | `Assign` target is an `Attribute` node, `attr == "environ"`, receiver is a bare `Name` `os` |
 
 Each lives in its own file with a module docstring explaining the bug and a
 real-world example of where it was found.

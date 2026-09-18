@@ -1,14 +1,14 @@
 # Findings in the wild
 
-Eight of the thirty-three `codehound` rules were distilled from a bug
+Eight of the thirty-six `codehound` rules were distilled from a bug
 found in a real, widely-used open-source project, with the fix submitted
-as a pull request. The rest (CH007-CH009, CH012-CH033) are hardening
+as a pull request. The rest (CH007-CH009, CH012-CH036) are hardening
 rules verified through real false positives against a ~29-framework
 validation corpus instead of a found-and-merged bug - see "Notes on
-precision" below for why, and what that absence itself says. CH026 and
-CH029 are partial exceptions: both found real, previously-unreported
-bugs on their first scan, but not all of them have a PR yet - see "Real
-bugs found, not yet filed" below.
+precision" below for why, and what that absence itself says. CH026,
+CH029, CH034, and CH036 are partial exceptions: each found real,
+previously-unreported bugs on their first scan, but not all of them
+have a PR yet - see "Real bugs found, not yet filed" below.
 
 | Rule | Project | ⭐ | The bug | Fix |
 |------|---------|----|---------|-----|
@@ -313,6 +313,22 @@ the false positives a naive grep would have reported:
   `line.lstrip("data:").rstrip("/n")`, where the second call is almost
   certainly a typo for the newline escape `"\n"`.
 
+- **CH034, CH035, CH036 - verified in a REPL before any AST code was
+  written, not just reasoned about.** `raise "x"`, `raise None`, `raise
+  f"x"`, `raise (1, 2)`, and `raise {1: 2}` were each actually executed
+  and confirmed to raise `TypeError: exceptions must derive from
+  BaseException` - the same failure for every literal shape, which is
+  why CH034 flags all of them with one check instead of one per shape.
+  `except ():` was confirmed to let a real `ValueError` propagate past
+  it untouched. `os.environ = {}` was confirmed, via a real
+  `subprocess.run` call, to leave a variable set moments earlier still
+  visible to a spawned child process even though `os.getenv` in the
+  same process reports it gone - the two views genuinely disagree, not
+  just in theory. Unlike CH032/CH033, none of the three needed a
+  precision-narrowing pass after the first corpus scan (2 real hits,
+  zero false positives, across ~29 frameworks) - there's no legitimate
+  Python construct any of them could be mistaken for.
+
 These are why the test suite asserts *both* directions: bad code flagged, good code
 left alone.
 
@@ -412,6 +428,31 @@ Two more real bugs found the same way, in different checks:
   supports before claiming it's a bug rather than reasoning about a
   pattern - the same "verify before build" bar this project applies to
   its own checks now applied to using them.
+- **CH034 (`raise-literal`) in llama_index's lilac reader.**
+  `LilacReader.load_data`'s `except ImportError:` handler is
+  `raise ("\`lilac\` package not found, please run \`pip install
+  lilac\`")` - no comma inside the parens, so this parses as a
+  parenthesized string, not a tuple, and is exactly `raise "..."`.
+  Anyone missing the optional `lilac` dependency gets an unrelated
+  `TypeError: exceptions must derive from BaseException` instead of the
+  intended install instructions - the one case a helpful error message
+  most needs to actually show up. Fix is a single, unambiguous line
+  (`raise ImportError(...)`); queued to file.
+- **CH036 (`environ-reassignment`) in HuggingFace `datasets`.**
+  `Dataset.map`'s multiprocessing path does `os.environ = prev_env`
+  immediately after opening `mp.Pool(num_proc)`, clearly intended to
+  restore environment variables (likely ones temporarily overridden
+  earlier in the same function) before spawning worker processes. Since
+  a direct `os.environ` reassignment never reaches the real process
+  environment, the spawned pool workers inherit whatever the actual
+  environment still is, not the "restored" one - the fix silently
+  doesn't do what its own code implies. Confirmed the general mechanism
+  in a REPL (see "Notes on precision" below) rather than assuming it
+  transfers to this exact call site; the fix itself
+  (`os.environ.clear(); os.environ.update(prev_env)`) needs the
+  surrounding function's full context read first to confirm `prev_env`
+  is the right restore target, which hasn't been done yet - queued, not
+  filed.
 
 ## Bugs the tool found on its own
 
