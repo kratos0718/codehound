@@ -70,11 +70,13 @@ src/codehound/
 │   ├── floating_timer.py       CH028
 │   ├── finally_swallows_exception.py CH029
 │   ├── lru_cache_on_async_function.py CH030
-│   └── unclosed_pool.py        CH031
+│   ├── unclosed_pool.py        CH031
+│   ├── nondeterministic_default.py CH032
+│   └── strip_multichar.py      CH033
 └── __init__.py      # public API surface + __version__
 ```
 
-~4,000 lines of source, zero runtime dependencies (standard-library `ast` only).
+~4,300 lines of source, zero runtime dependencies (standard-library `ast` only).
 
 ## The core contract
 
@@ -212,7 +214,7 @@ HuggingFace's `transformers` produced byte-identical output at `workers=1`
 and at the default worker count, while cutting wall-clock time from 57
 seconds to 12.
 
-## The thirty-one checks
+## The thirty-three checks
 
 | Code | Detects | Key structural test |
 |------|---------|--------------------|
@@ -225,7 +227,7 @@ seconds to 12.
 | CH007 | `async def` called without `await`/scheduling | bare `Expr` wrapping a `Call` whose target resolves to a same-file `async def` - module-level for bare names, same-class for `self./cls.` |
 | CH008 | `asyncio.run()` called from a running loop | `Call` to `asyncio.run` whose *immediate* enclosing function is an `AsyncFunctionDef` |
 | CH009 | non-daemon `threading.Thread` started, never joined | assignment/chained call to `threading.Thread(...)`, `.start()` seen, no `.join()`, no `daemon=True`, not returned/stored as any object's attribute |
-| CH010 | lambda in a loop captures the loop variable by reference | `Lambda` referencing a `for`-loop's target name, *directly stored* (appended/assigned/returned) rather than passed as a callback argument that's consumed immediately |
+| CH010 | lambda *or* nested `def` in a loop captures the loop variable by reference | `Lambda`/`FunctionDef`/`AsyncFunctionDef` referencing a `for`-loop's target name, *directly stored* (appended/assigned/returned - for a `def`, checked via its name rather than the statement itself) rather than passed as a callback argument that's consumed immediately |
 | CH011 | `@lru_cache`/`@cache` on an instance method | decorator resolves to `lru_cache`/`cache`, enclosing scope is a `ClassDef`, not `staticmethod`/`classmethod`, class isn't a frozen dataclass/pydantic model |
 | CH012 | non-daemon `multiprocessing.Process` started, never joined | same shape as CH009, for `multiprocessing.Process(...)` |
 | CH013 | discarded `Executor.submit(...)` result | bare `Expr` wrapping `.submit(...)` on a name tracked back to a `ThreadPoolExecutor`/`ProcessPoolExecutor` construction |
@@ -247,6 +249,8 @@ seconds to 12.
 | CH029 | `return`/`break`/`continue` in `finally:` swallows a pending exception | scoped walk of `finalbody` for an escaping `Return`, or a `Break`/`Continue` whose owning loop is outside the `finally:`; skipped entirely when every `except` handler never re-raises |
 | CH030 | `@lru_cache`/`@cache` on `async def` | decorator resolves to `lru_cache`/`cache`, decorated node is an `AsyncFunctionDef` (method or module-level) |
 | CH031 | `multiprocessing.Pool(...)` never closed | same shape as CH005/CH016/CH027/CH028, `.close()`/`.terminate()` instead of `.join()`/`.cancel()` |
+| CH032 | default argument evaluates a nondeterministic call (`time.time()`, `random.random()`, `uuid.uuid4()`, …) | default value (positional or keyword-only) is a `Call` whose `(module, attribute)` pair is in a curated set of ten always-changes-per-call functions |
+| CH033 | `.strip()`/`.lstrip()`/`.rstrip()` argument reads as a substring, not a character set | single string-literal argument, length > 1, more than one distinct character, and at least one character is alphanumeric |
 
 Each lives in its own file with a module docstring explaining the bug and a
 real-world example of where it was found.

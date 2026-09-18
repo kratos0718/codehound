@@ -29,6 +29,14 @@ Comprehensions (`` [lambda: i for i in range(3)] ``) are the one
 exception: the ``elt``/``key``/``value`` position *is* inherently the
 "produce and store" position, so no extra storage-context check is
 needed there.
+
+Same bug, same fix, different syntax: a nested ``def`` inside a ``for``
+loop captures the loop variable exactly the same way a lambda does -
+flake8-bugbear's B023 covers both shapes under one rule, and this check
+now does too. ``def`` is a statement, not an expression, so "is it
+stored" means something different: the function's *name* has to show up
+later in a storage position (appended, assigned, returned), not the
+``def`` itself.
 """
 
 from __future__ import annotations
@@ -51,6 +59,53 @@ def _references_name_unshadowed(lam: ast.Lambda, name: str) -> bool:
     for node in ast.walk(lam.body):
         if isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Load):
             return True
+    return False
+
+
+def _references_name_in_body(funcdef: ast.FunctionDef | ast.AsyncFunctionDef, name: str) -> bool:
+    """Like ``_references_name_unshadowed`` but for a ``def``'s own
+    parameters and statement body rather than a lambda's params and
+    single expression - a same-named parameter shadows the outer loop
+    variable exactly like it would for a lambda."""
+    args = funcdef.args
+    param_names = {a.arg for a in (args.posonlyargs + args.args + args.kwonlyargs)}
+    if args.vararg:
+        param_names.add(args.vararg.arg)
+    if args.kwarg:
+        param_names.add(args.kwarg.arg)
+    if name in param_names:
+        return False
+    for stmt in funcdef.body:
+        for node in ast.walk(stmt):
+            if isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Load):
+                return True
+    return False
+
+
+def _name_is_stored(name: str, loop_body: list[ast.stmt], parents: dict) -> bool:
+    """True if `name` (a nested def's own name) is later used in a
+    storage position anywhere in the loop body: assigned, returned/
+    yielded, or passed to `.append()`/`.add()` - same storage shapes
+    `_is_stored` recognizes for a lambda, just checked via the Name
+    reference's parent instead of the def statement's own parent, since
+    a `def` can't be the direct value of an assignment the way a lambda
+    expression can."""
+    for stmt in loop_body:
+        for node in ast.walk(stmt):
+            if not (isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Load)):
+                continue
+            parent = parents.get(id(node))
+            if isinstance(parent, (ast.Assign, ast.AnnAssign)) and parent.value is node:
+                return True
+            if isinstance(parent, (ast.Return, ast.Yield)) and parent.value is node:
+                return True
+            if (
+                isinstance(parent, ast.Call)
+                and isinstance(parent.func, ast.Attribute)
+                and parent.func.attr in _STORAGE_METHODS
+                and node in parent.args
+            ):
+                return True
     return False
 
 
@@ -120,4 +175,35 @@ class LoopClosureCapture(Check):
                                 )
                             )
                             break
+
+            # Same bug, `def` instead of `lambda`: a nested function
+            # defined directly in a `for` loop's body, capturing the loop
+            # variable, whose *name* (not the def itself) is later stored
+            # somewhere that outlives this iteration.
+            if isinstance(loop, ast.For) and isinstance(loop.target, ast.Name):
+                var = loop.target.id
+                for stmt in loop.body:
+                    if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        continue
+                    if id(stmt) in seen:
+                        continue
+                    if not _references_name_in_body(stmt, var):
+                        continue
+                    if not _name_is_stored(stmt.name, loop.body, parents):
+                        continue
+                    seen.add(id(stmt))
+                    findings.append(
+                        Finding(
+                            path=path,
+                            line=stmt.lineno,
+                            col=stmt.col_offset,
+                            code=self.code,
+                            message=(
+                                f"`{stmt.name}` captures loop variable `{var}` by reference; if "
+                                f"called after the loop moves on, every instance sees the same "
+                                f"final value. Bind it explicitly with a default argument, e.g. "
+                                f"`def {stmt.name}({var}={var}):`."
+                            ),
+                        )
+                    )
         return findings

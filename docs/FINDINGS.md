@@ -1,8 +1,8 @@
 # Findings in the wild
 
-Eight of the thirty-one `codehound` rules were distilled from a bug
+Eight of the thirty-three `codehound` rules were distilled from a bug
 found in a real, widely-used open-source project, with the fix submitted
-as a pull request. The rest (CH007-CH009, CH012-CH031) are hardening
+as a pull request. The rest (CH007-CH009, CH012-CH033) are hardening
 rules verified through real false positives against a ~29-framework
 validation corpus instead of a found-and-merged bug - see "Notes on
 precision" below for why, and what that absence itself says. CH026 and
@@ -278,6 +278,40 @@ the false positives a naive grep would have reported:
   currently dead code rather than a live swallow. Recorded honestly
   rather than reported as an active bug - see "Real bugs found, not yet
   filed" below for the full letta story.
+
+- **CH010's `def` extension, scoped to what was actually verified** —
+  extending the check to nested `def`s (the same closure-capture bug as
+  the lambda case, just a statement instead of an expression) reused the
+  lambda logic's storage guard rather than a new one: a `def`'s *name*,
+  not the `def` itself, has to show up in a storage position later in
+  the loop body. Deliberately left narrower than it could be - only
+  direct top-level statements of the loop body are checked, not a `def`
+  nested inside an `if`/`try` inside the loop - rather than guess at a
+  more general walk without a corpus hit to verify it against.
+- **CH032, checked for the obvious "what if it's a factory" objection
+  before shipping** — the concern with any "call as a default is
+  suspicious" rule (this is bugbear B008's exact framing) is that a lot
+  of call-as-default patterns are deliberate, cached-at-import-time
+  configuration, not a bug. Restricting the curated function list to
+  ones where "the same value forever" can never be intended (the current
+  time, a random number, a fresh UUID) sidesteps that objection entirely
+  - there's no legitimate reading of `def f(id=uuid.uuid4()):` where a
+  fixed, shared UUID across every call is what the author wanted.
+- **CH033's punctuation-only exclusion, added after the first corpus
+  scan came back mostly false positives** — the first pass (any
+  multi-character string argument, matching bugbear B005's own rule
+  exactly) came back with 136 hits across ~29 frameworks; a full read
+  showed the overwhelming majority - `.strip('\r\n')`, `.strip('[]')`,
+  `.strip('\'"')`, `.lstrip('│ ├└─')` (box-drawing tree glyphs in
+  marimo/agno) - are deliberate, correct uses of the character-*set*
+  semantics, not a substring mistake. Every genuine mistake in that scan
+  shared one trait the safe cases didn't: at least one letter or digit
+  in the argument (`data:`, `/v1`, `THREAD#`, `json`). Added that filter
+  plus a same-character-repeated exclusion (`.strip('```')` is just
+  backtick, no ambiguity), which cut the hit count to 18 - all 18 read as
+  genuine mistakes on inspection, including huggingface_hub's
+  `line.lstrip("data:").rstrip("/n")`, where the second call is almost
+  certainly a typo for the newline escape `"\n"`.
 
 These are why the test suite asserts *both* directions: bad code flagged, good code
 left alone.

@@ -22,11 +22,13 @@ from codehound.checks.lru_cache_on_async_function import LruCacheOnAsyncFunction
 from codehound.checks.lru_cache_on_method import LruCacheOnMethod
 from codehound.checks.mutable_class_attribute import MutableClassAttribute
 from codehound.checks.mutable_defaults import MutableDefaultArgument
+from codehound.checks.nondeterministic_default import NondeterministicDefault
 from codehound.checks.removed_asyncio_task_methods import RemovedAsyncioTaskMethods
 from codehound.checks.removed_getargspec import RemovedGetargspec
 from codehound.checks.removed_stdlib_attribute import RemovedStdlibAttribute
 from codehound.checks.removed_stdlib_module import RemovedStdlibModule
 from codehound.checks.resource_leak import UnclosedFileHandle
+from codehound.checks.strip_multichar import StripMultichar
 from codehound.checks.unawaited_coroutine import UnawaitedCoroutineCall
 from codehound.checks.unclosed_pool import UnclosedPool
 from codehound.checks.unclosed_socket import UnclosedSocket
@@ -67,6 +69,8 @@ ALL_CHECKS: list[type[Check]] = [
     FinallySwallowsException,
     LruCacheOnAsyncFunction,
     UnclosedPool,
+    NondeterministicDefault,
+    StripMultichar,
 ]
 
 

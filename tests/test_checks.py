@@ -468,6 +468,71 @@ def test_ch010_still_flags_lambda_appended_even_when_named_like_a_key_fn():
     assert len(findings) == 1
 
 
+def test_ch010_flags_nested_def_capturing_loop_variable():
+    # Same bug as the lambda case, `def` instead - flake8-bugbear's B023
+    # covers this shape too.
+    code = (
+        "callbacks = []\n"
+        "for i in range(3):\n"
+        "    def handler():\n"
+        "        return i\n"
+        "    callbacks.append(handler)\n"
+    )
+    findings = _run(code, ["CH010"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH010"
+
+
+def test_ch010_flags_nested_def_returned():
+    code = (
+        "def make_handlers():\n"
+        "    handlers = []\n"
+        "    for i in range(3):\n"
+        "        def handler():\n"
+        "            return i\n"
+        "        handlers.append(handler)\n"
+        "    return handlers\n"
+    )
+    findings = _run(code, ["CH010"])
+    assert len(findings) == 1
+
+
+def test_ch010_ignores_nested_def_shadowed_by_own_parameter():
+    # def's own parameter `i` shadows the outer loop variable - the same
+    # guard the lambda case already has for lambda i=i: i.
+    code = (
+        "callbacks = []\n"
+        "for i in range(3):\n"
+        "    def handler(i):\n"
+        "        return i\n"
+        "    callbacks.append(handler)\n"
+    )
+    assert _run(code, ["CH010"]) == []
+
+
+def test_ch010_ignores_nested_def_not_referencing_loop_var():
+    code = (
+        "callbacks = []\n"
+        "for i in range(3):\n"
+        "    def handler():\n"
+        "        return 42\n"
+        "    callbacks.append(handler)\n"
+    )
+    assert _run(code, ["CH010"]) == []
+
+
+def test_ch010_ignores_nested_def_never_stored():
+    # Defined and called immediately within the same iteration - nothing
+    # outlives the loop, same idea as the immediately-invoked lambda case.
+    code = (
+        "for i in range(3):\n"
+        "    def handler():\n"
+        "        return i\n"
+        "    print(handler())\n"
+    )
+    assert _run(code, ["CH010"]) == []
+
+
 # --- CH011 lru-cache-on-method ------------------------------------------------------
 
 
@@ -1706,4 +1771,105 @@ def test_ch031_ignores_pool_stored_as_attribute():
         "    obj.pool = pool\n"
     )
     assert _run(code, ["CH031"]) == []
+
+
+# --- CH032 nondeterministic-default-argument --------------------------------------------
+
+
+def test_ch032_flags_time_time_default():
+    code = "import time\ndef f(x=time.time()):\n    return x\n"
+    findings = _run(code, ["CH032"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH032"
+
+
+def test_ch032_flags_datetime_now_default():
+    code = "from datetime import datetime\ndef f(x=datetime.now()):\n    return x\n"
+    findings = _run(code, ["CH032"])
+    assert len(findings) == 1
+
+
+def test_ch032_flags_random_default_on_lambda():
+    code = "import random\nf = lambda x=random.random(): x\n"
+    findings = _run(code, ["CH032"])
+    assert len(findings) == 1
+
+
+def test_ch032_flags_uuid4_keyword_only_default():
+    code = "import uuid\ndef f(*, id=uuid.uuid4()):\n    return id\n"
+    findings = _run(code, ["CH032"])
+    assert len(findings) == 1
+
+
+def test_ch032_ignores_none_default():
+    code = "def f(x=None):\n    return x\n"
+    assert _run(code, ["CH032"]) == []
+
+
+def test_ch032_ignores_literal_default():
+    code = "def f(x=10):\n    return x\n"
+    assert _run(code, ["CH032"]) == []
+
+
+def test_ch032_ignores_unrelated_call_default():
+    code = "def f(x=get_default_timeout()):\n    return x\n"
+    assert _run(code, ["CH032"]) == []
+
+
+def test_ch032_ignores_module_constant_default():
+    code = "import time\ndef f(x=time.sleep):\n    return x\n"
+    assert _run(code, ["CH032"]) == []
+
+
+# --- CH033 strip-multichar-argument ------------------------------------------------------
+
+
+def test_ch033_flags_strip_with_multichar_string():
+    code = "'report.txt'.strip('.txt')\n"
+    findings = _run(code, ["CH033"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH033"
+
+
+def test_ch033_flags_lstrip_with_multichar_string():
+    code = "'v1.2.3'.lstrip('v.')\n"
+    findings = _run(code, ["CH033"])
+    assert len(findings) == 1
+
+
+def test_ch033_flags_rstrip_with_multichar_string():
+    code = "'name.txt'.rstrip('.txt')\n"
+    findings = _run(code, ["CH033"])
+    assert len(findings) == 1
+
+
+def test_ch033_ignores_single_char_argument():
+    code = "'name,'.strip(',')\n"
+    assert _run(code, ["CH033"]) == []
+
+
+def test_ch033_ignores_strip_with_no_argument():
+    code = "'  name  '.strip()\n"
+    assert _run(code, ["CH033"]) == []
+
+
+def test_ch033_ignores_non_string_variable_argument():
+    code = "chars = build_chars()\n'name'.strip(chars)\n"
+    assert _run(code, ["CH033"]) == []
+
+
+def test_ch033_ignores_repeated_single_character():
+    code = "'```sql```'.strip('```')\n"
+    assert _run(code, ["CH033"]) == []
+
+
+def test_ch033_ignores_bracket_or_quote_character_set():
+    code = "'[1,2,3]'.strip('[]')\nline.rstrip('\\r\\n')\ns.strip('\\'\"')\n"
+    assert _run(code, ["CH033"]) == []
+
+
+def test_ch033_flags_argument_with_letters_even_with_punctuation():
+    code = "url.strip('/v1')\n"
+    findings = _run(code, ["CH033"])
+    assert len(findings) == 1
 
