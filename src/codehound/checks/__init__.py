@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+from codehound.checks.assert_on_tuple import AssertOnTuple
+from codehound.checks.assert_raises_too_broad import AssertRaisesTooBroad
 from codehound.checks.async_property import AsyncProperty
 from codehound.checks.asyncio_coroutine_decorator import AsyncioCoroutineDecorator
 from codehound.checks.asyncio_run_in_loop import AsyncioRunInRunningLoop
+from codehound.checks.augassign_without_nonlocal import AugassignWithoutNonlocal
 from codehound.checks.bare_except import BareExcept
 from codehound.checks.blocking_async import BlockingCallInAsync
 from codehound.checks.collections_abc_import import CollectionsAbcImport
+from codehound.checks.contextmanager_yield_unprotected import ContextmanagerYieldUnprotected
 from codehound.checks.datetime_utcnow import DeprecatedDatetimeUtcnow
 from codehound.checks.discarded_future import DiscardedFuture
+from codehound.checks.duplicate_dict_key import DuplicateDictKey
+from codehound.checks.duplicate_except_handler import DuplicateExceptHandler
+from codehound.checks.duplicate_set_value import DuplicateSetValue
 from codehound.checks.empty_except_tuple import EmptyExceptTuple
 from codehound.checks.environ_reassignment import EnvironReassignment
 from codehound.checks.finally_swallows_exception import FinallySwallowsException
@@ -25,6 +32,7 @@ from codehound.checks.lru_cache_on_async_function import LruCacheOnAsyncFunction
 from codehound.checks.lru_cache_on_method import LruCacheOnMethod
 from codehound.checks.mutable_class_attribute import MutableClassAttribute
 from codehound.checks.mutable_defaults import MutableDefaultArgument
+from codehound.checks.nan_equality import NanEqualityComparison
 from codehound.checks.nondeterministic_default import NondeterministicDefault
 from codehound.checks.pointless_comparison import PointlessComparisonStatement
 from codehound.checks.raise_literal import RaiseLiteral
@@ -33,7 +41,10 @@ from codehound.checks.removed_getargspec import RemovedGetargspec
 from codehound.checks.removed_stdlib_attribute import RemovedStdlibAttribute
 from codehound.checks.removed_stdlib_module import RemovedStdlibModule
 from codehound.checks.resource_leak import UnclosedFileHandle
+from codehound.checks.static_dict_comprehension_key import StaticDictComprehensionKey
+from codehound.checks.staticmethod_references_self import StaticmethodReferencesSelf
 from codehound.checks.strip_multichar import StripMultichar
+from codehound.checks.suppress_empty import SuppressEmpty
 from codehound.checks.unawaited_coroutine import UnawaitedCoroutineCall
 from codehound.checks.unclosed_pool import UnclosedPool
 from codehound.checks.unclosed_socket import UnclosedSocket
@@ -83,6 +94,17 @@ ALL_CHECKS: list[type[Check]] = [
     PointlessComparisonStatement,
     UselessExpressionStatement,
     LockConstructedInline,
+    AssertRaisesTooBroad,
+    SuppressEmpty,
+    DuplicateExceptHandler,
+    NanEqualityComparison,
+    AugassignWithoutNonlocal,
+    DuplicateDictKey,
+    DuplicateSetValue,
+    ContextmanagerYieldUnprotected,
+    AssertOnTuple,
+    StaticmethodReferencesSelf,
+    StaticDictComprehensionKey,
 ]
 
 

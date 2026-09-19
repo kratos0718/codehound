@@ -2174,3 +2174,397 @@ def test_ch039_ignores_unrelated_context_manager():
     code = "def f():\n    with open('x') as fh:\n        pass\n"
     assert _run(code, ["CH039"]) == []
 
+
+# --- CH040 assert-raises-too-broad --------------------------------------------------------
+
+
+def test_ch040_flags_pytest_raises_exception():
+    code = "import pytest\ndef test_f():\n    with pytest.raises(Exception):\n        pass\n"
+    findings = _run(code, ["CH040"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH040"
+
+
+def test_ch040_flags_assert_raises_base_exception():
+    code = "class T:\n    def test_f(self):\n        with self.assertRaises(BaseException):\n            pass\n"
+    findings = _run(code, ["CH040"])
+    assert len(findings) == 1
+
+
+def test_ch040_ignores_specific_exception_type():
+    code = "import pytest\ndef test_f():\n    with pytest.raises(ValueError):\n        pass\n"
+    assert _run(code, ["CH040"]) == []
+
+
+def test_ch040_ignores_unrelated_with_statement():
+    code = "def f():\n    with open('x') as fh:\n        pass\n"
+    assert _run(code, ["CH040"]) == []
+
+
+# --- CH041 suppress-empty ------------------------------------------------------------------
+
+
+def test_ch041_flags_contextlib_suppress_empty():
+    code = "import contextlib\ndef f():\n    with contextlib.suppress():\n        pass\n"
+    findings = _run(code, ["CH041"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH041"
+
+
+def test_ch041_flags_bare_suppress_when_imported():
+    code = "from contextlib import suppress\ndef f():\n    with suppress():\n        pass\n"
+    findings = _run(code, ["CH041"])
+    assert len(findings) == 1
+
+
+def test_ch041_ignores_suppress_with_exception_type():
+    code = "import contextlib\ndef f():\n    with contextlib.suppress(ValueError):\n        pass\n"
+    assert _run(code, ["CH041"]) == []
+
+
+def test_ch041_ignores_bare_suppress_not_imported():
+    code = "def f():\n    with suppress():\n        pass\n"
+    assert _run(code, ["CH041"]) == []
+
+
+# --- CH042 duplicate-except-handler ---------------------------------------------------------
+
+
+def test_ch042_flags_same_type_in_two_handlers():
+    code = "try:\n    pass\nexcept ValueError:\n    pass\nexcept ValueError:\n    pass\n"
+    findings = _run(code, ["CH042"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH042"
+
+
+def test_ch042_flags_duplicate_within_one_tuple():
+    code = "try:\n    pass\nexcept (ValueError, ValueError):\n    pass\n"
+    findings = _run(code, ["CH042"])
+    assert len(findings) == 1
+
+
+def test_ch042_ignores_different_exception_types():
+    code = "try:\n    pass\nexcept ValueError:\n    pass\nexcept TypeError:\n    pass\n"
+    assert _run(code, ["CH042"]) == []
+
+
+# --- CH043 nan-equality-comparison -----------------------------------------------------------
+
+
+def test_ch043_flags_equality_against_float_nan():
+    code = "x = 1.0\nx == float('nan')\n"
+    findings = _run(code, ["CH043"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH043"
+
+
+def test_ch043_flags_inequality_against_math_nan():
+    code = "import math\nx = 1.0\nx != math.nan\n"
+    findings = _run(code, ["CH043"])
+    assert len(findings) == 1
+
+
+def test_ch043_ignores_ordinary_float_comparison():
+    code = "x = 1.0\nx == 2.0\n"
+    assert _run(code, ["CH043"]) == []
+
+
+def test_ch043_ignores_isnan_call():
+    code = "import math\nx = 1.0\nmath.isnan(x)\n"
+    assert _run(code, ["CH043"]) == []
+
+
+# --- CH044 augassign-without-nonlocal --------------------------------------------------------
+
+
+def test_ch044_flags_augassign_without_nonlocal():
+    code = "def outer():\n    count = 0\n    def inc():\n        count += 1\n        return count\n    return inc()\n"
+    findings = _run(code, ["CH044"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH044"
+
+
+def test_ch044_ignores_augassign_with_nonlocal():
+    code = (
+        "def outer():\n"
+        "    count = 0\n"
+        "    def inc():\n"
+        "        nonlocal count\n"
+        "        count += 1\n"
+        "        return count\n"
+        "    return inc()\n"
+    )
+    assert _run(code, ["CH044"]) == []
+
+
+def test_ch044_ignores_augassign_on_parameter():
+    code = "def outer():\n    def inc(count):\n        count += 1\n        return count\n    return inc(0)\n"
+    assert _run(code, ["CH044"]) == []
+
+
+def test_ch044_ignores_augassign_with_prior_local_assignment():
+    code = (
+        "def outer():\n"
+        "    count = 0\n"
+        "    def inc():\n"
+        "        count = 5\n"
+        "        count += 1\n"
+        "        return count\n"
+        "    return inc()\n"
+    )
+    assert _run(code, ["CH044"]) == []
+
+
+def test_ch044_ignores_augassign_at_module_level_function():
+    code = "count = 0\ndef inc():\n    count += 1\n    return count\n"
+    assert _run(code, ["CH044"]) == []
+
+
+# --- CH045 duplicate-dict-key -----------------------------------------------------------------
+
+
+def test_ch045_flags_duplicate_string_key():
+    code = "{'a': 1, 'b': 2, 'a': 3}\n"
+    findings = _run(code, ["CH045"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH045"
+
+
+def test_ch045_flags_bool_int_collision():
+    code = "{True: 1, 1: 2}\n"
+    findings = _run(code, ["CH045"])
+    assert len(findings) == 1
+
+
+def test_ch045_ignores_distinct_keys():
+    code = "{'a': 1, 'b': 2, 'c': 3}\n"
+    assert _run(code, ["CH045"]) == []
+
+
+def test_ch045_ignores_non_literal_keys():
+    code = "x = 1\ny = 2\n{x: 'a', y: 'b'}\n"
+    assert _run(code, ["CH045"]) == []
+
+
+# --- CH046 duplicate-set-value ------------------------------------------------------------------
+
+
+def test_ch046_flags_duplicate_int_value():
+    code = "{1, 2, 2, 3}\n"
+    findings = _run(code, ["CH046"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH046"
+
+
+def test_ch046_ignores_distinct_values():
+    code = "{1, 2, 3}\n"
+    assert _run(code, ["CH046"]) == []
+
+
+# --- CH047 contextmanager-yield-unprotected ------------------------------------------------------
+
+
+def test_ch047_flags_cleanup_after_bare_yield():
+    code = (
+        "import contextlib\n"
+        "@contextlib.contextmanager\n"
+        "def resource():\n"
+        "    opened.append(1)\n"
+        "    yield 'handle'\n"
+        "    closed.append(1)\n"
+    )
+    findings = _run(code, ["CH047"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH047"
+
+
+def test_ch047_flags_cleanup_after_yield_inside_try_without_finally():
+    code = (
+        "import contextlib\n"
+        "@contextlib.contextmanager\n"
+        "def resource():\n"
+        "    try:\n"
+        "        opened.append(1)\n"
+        "        yield 'handle'\n"
+        "        closed.append(1)\n"
+        "    except Exception:\n"
+        "        raise\n"
+    )
+    findings = _run(code, ["CH047"])
+    assert len(findings) == 1
+
+
+def test_ch047_ignores_yield_wrapped_in_try_finally():
+    code = (
+        "import contextlib\n"
+        "@contextlib.contextmanager\n"
+        "def resource():\n"
+        "    try:\n"
+        "        opened.append(1)\n"
+        "        yield 'handle'\n"
+        "    finally:\n"
+        "        closed.append(1)\n"
+    )
+    assert _run(code, ["CH047"]) == []
+
+
+def test_ch047_ignores_yield_with_nothing_after():
+    code = (
+        "import contextlib\n"
+        "@contextlib.contextmanager\n"
+        "def resource():\n"
+        "    opened.append(1)\n"
+        "    yield 'handle'\n"
+    )
+    assert _run(code, ["CH047"]) == []
+
+
+def test_ch047_ignores_plain_generator_function():
+    code = "def gen():\n    yield 1\n    cleanup()\n"
+    assert _run(code, ["CH047"]) == []
+
+
+# --- CH048 assert-on-tuple ------------------------------------------------------------------------
+
+
+def test_ch048_flags_assert_on_nonempty_tuple():
+    code = "def check(x):\n    assert (x == 5, 'x should be 5')\n    return 'passed'\n"
+    findings = _run(code, ["CH048"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH048"
+
+
+def test_ch048_ignores_assert_with_comma_message():
+    code = "def check(x):\n    assert x == 5, 'x should be 5'\n    return 'passed'\n"
+    assert _run(code, ["CH048"]) == []
+
+
+def test_ch048_ignores_assert_on_empty_tuple():
+    code = "def check():\n    assert ()\n"
+    assert _run(code, ["CH048"]) == []
+
+
+def test_ch048_ignores_plain_assert():
+    code = "def check(x):\n    assert x == 5\n"
+    assert _run(code, ["CH048"]) == []
+
+
+# --- CH049 staticmethod-references-self -----------------------------------------------------------
+
+
+def test_ch049_flags_staticmethod_referencing_self():
+    code = "class C:\n    @staticmethod\n    def method(x):\n        return self.value + x\n"
+    findings = _run(code, ["CH049"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH049"
+
+
+def test_ch049_flags_staticmethod_referencing_cls():
+    code = "class C:\n    @staticmethod\n    def method():\n        return cls.value\n"
+    findings = _run(code, ["CH049"])
+    assert len(findings) == 1
+
+
+def test_ch049_ignores_self_as_parameter_name():
+    code = "class C:\n    @staticmethod\n    def method(self):\n        return self.value\n"
+    assert _run(code, ["CH049"]) == []
+
+
+def test_ch049_ignores_classmethod_referencing_cls():
+    code = "class C:\n    @classmethod\n    def method(cls):\n        return cls.value\n"
+    assert _run(code, ["CH049"]) == []
+
+
+def test_ch049_ignores_instance_method_referencing_self():
+    code = "class C:\n    def method(self):\n        return self.value\n"
+    assert _run(code, ["CH049"]) == []
+
+
+def test_ch049_ignores_nested_function_with_own_self_param():
+    code = (
+        "class C:\n"
+        "    @staticmethod\n"
+        "    def method(x):\n"
+        "        def helper(self):\n"
+        "            return self.value\n"
+        "        return helper\n"
+    )
+    assert _run(code, ["CH049"]) == []
+
+
+def test_ch049_ignores_self_reassigned_as_local_variable():
+    code = (
+        "class C:\n"
+        "    @staticmethod\n"
+        "    def create():\n"
+        "        self = C.__new__(C)\n"
+        "        self.value = 1\n"
+        "        return self\n"
+    )
+    assert _run(code, ["CH049"]) == []
+
+
+def test_ch049_ignores_cls_bound_by_comprehension_generator():
+    code = (
+        "class C:\n"
+        "    @staticmethod\n"
+        "    def method(items):\n"
+        "        return {cls.__name__ for cls in items}\n"
+    )
+    assert _run(code, ["CH049"]) == []
+
+
+def test_ch049_ignores_cls_assigned_as_ordinary_local():
+    code = (
+        "class C:\n"
+        "    @staticmethod\n"
+        "    def method(value):\n"
+        "        cls = type(value)\n"
+        "        return cls.__name__\n"
+    )
+    assert _run(code, ["CH049"]) == []
+
+
+# --- CH050 static-dict-comprehension-key -------------------------------------------------------
+
+
+def test_ch050_flags_key_not_referencing_loop_variable():
+    code = "items = [1, 2, 3]\n{'result': item for item in items}\n"
+    findings = _run(code, ["CH050"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH050"
+
+
+def test_ch050_flags_key_referencing_wrong_outer_variable():
+    code = "other = 'x'\nitems = [1, 2, 3]\n{other: item for item in items}\n"
+    findings = _run(code, ["CH050"])
+    assert len(findings) == 1
+
+
+def test_ch050_ignores_key_referencing_loop_variable():
+    code = "items = [1, 2, 3]\n{item: item * 2 for item in items}\n"
+    assert _run(code, ["CH050"]) == []
+
+
+def test_ch050_ignores_key_referencing_unpacked_loop_variable():
+    code = "pairs = [(1, 'a'), (2, 'b')]\n{k: v for k, v in pairs}\n"
+    assert _run(code, ["CH050"]) == []
+
+
+def test_ch050_ignores_key_with_function_call():
+    code = "import uuid\nitems = [1, 2, 3]\n{uuid.uuid4(): item for item in items}\n"
+    assert _run(code, ["CH050"]) == []
+
+
+def test_ch050_ignores_key_with_walrus():
+    code = "items = [1, 2, 3]\ni = 0\n{(i := i + 1): item for item in items}\n"
+    assert _run(code, ["CH050"]) == []
+
+
+def test_ch050_ignores_key_bound_by_walrus_in_if_clause():
+    code = (
+        "items = {'a': {'doc_hash': 'x'}, 'b': {'doc_hash': 'y'}}\n"
+        "{doc_hash: doc_id for doc_id, doc in items.items() if (doc_hash := doc.get('doc_hash'))}\n"
+    )
+    assert _run(code, ["CH050"]) == []
+

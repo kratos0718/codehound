@@ -78,11 +78,22 @@ src/codehound/
 │   ├── environ_reassignment.py CH036
 │   ├── pointless_comparison.py CH037
 │   ├── useless_expression.py   CH038
-│   └── lock_constructed_inline.py CH039
+│   ├── lock_constructed_inline.py CH039
+│   ├── assert_raises_too_broad.py CH040
+│   ├── suppress_empty.py       CH041
+│   ├── duplicate_except_handler.py CH042
+│   ├── nan_equality.py         CH043
+│   ├── augassign_without_nonlocal.py CH044
+│   ├── duplicate_dict_key.py   CH045
+│   ├── duplicate_set_value.py  CH046
+│   ├── contextmanager_yield_unprotected.py CH047
+│   ├── assert_on_tuple.py      CH048
+│   ├── staticmethod_references_self.py CH049
+│   └── static_dict_comprehension_key.py CH050
 └── __init__.py      # public API surface + __version__
 ```
 
-~4,800 lines of source, zero runtime dependencies (standard-library `ast` only).
+~5,800 lines of source, zero runtime dependencies (standard-library `ast` only).
 
 ## The core contract
 
@@ -126,6 +137,13 @@ Three shared predicates are built on top of it:
 - `is_awaited(node, parents)` — is the node's direct parent an `ast.Await`?
 - `inside_with_statement(node, parents)` — climb to a `With`/`AsyncWith`,
   stopping at the function/class/module boundary.
+
+One more shared helper doesn't need the parent map at all: `literal_value(node)`
+returns a hashable Python value for a `Constant` or a `Tuple` of them - the same
+value Python's own runtime equality would compare (so `1`, `1.0`, and `True`
+collide, exactly like they do as real dict keys), or the `UNRESOLVED` sentinel
+for anything else. CH045 and CH046 both compare AST literals this way instead
+of by node identity or naive `(type, value)` pairs.
 
 ## How a scan runs
 
@@ -220,7 +238,7 @@ HuggingFace's `transformers` produced byte-identical output at `workers=1`
 and at the default worker count, while cutting wall-clock time from 57
 seconds to 12.
 
-## The thirty-nine checks
+## The fifty checks
 
 | Code | Detects | Key structural test |
 |------|---------|--------------------|
@@ -263,6 +281,17 @@ seconds to 12.
 | CH037 | comparison used as a bare statement | `Expr` whose `value` is a `Compare` node |
 | CH038 | literal/pure-builtin-call used as a bare statement | `Expr` whose `value` is a constant-only `List`/`Set`/`Dict`/`Tuple`, a non-string `Constant`, or a call to an unshadowed curated-pure builtin; skipped if it's the display statement of an `@*.cell`-decorated function |
 | CH039 | lock/RLock constructed directly in the `with`/`async with` that acquires it | `withitem.context_expr` is itself a `Call` to `threading.Lock`/`RLock`, `multiprocessing.Lock`/`RLock`, or `asyncio.Lock` |
+| CH040 | `pytest.raises(Exception)`/`self.assertRaises(Exception)` too broad | `with` context expr is a `Call` to `pytest.raises`/`*.assertRaises*` whose first arg (positional or `expected_exception=`) is a bare `Exception`/`BaseException` name |
+| CH041 | `contextlib.suppress()` with zero arguments | `Call` to `contextlib.suppress` (or bare `suppress` if actually imported from `contextlib`) with no args/kwargs |
+| CH042 | the same exception type in more than one place in a `try` | walks each `Try`'s handlers in order, matching `Name`/tuple-of-`Name` types against a running `seen` set |
+| CH043 | `==`/`!=` against `float('nan')`/`math.nan`/`np.nan` | same adjacent-triple chained-comparison walk as CH025, checking `Eq`/`NotEq` against a curated NaN-literal shape |
+| CH044 | augmented assignment to an enclosing-scope name, no `nonlocal` | `AugAssign` target is a bare `Name`, its enclosing function is itself nested in another function, the name isn't a parameter or `nonlocal`/`global`-declared, and it's the *only* local binding of that name in the function (skipping further-nested scopes) |
+| CH045 | duplicate key in a dict literal | two `Dict.keys` entries resolve to an equal `literal_value` |
+| CH046 | duplicate value in a set literal | two `Set.elts` entries resolve to an equal `literal_value` |
+| CH047 | `@contextmanager` cleanup after `yield` not wrapped in `try`/`finally` | a bare top-level `yield` (or one inside a `Try` with no `finalbody`) has another statement after it at the same block level |
+| CH048 | `assert` on a non-empty tuple literal | `Assert.test` is a `Tuple` with at least one element |
+| CH049 | `@staticmethod` body reads `self`/`cls` | a `Name`/`Load` reference to `self`/`cls` whose nearest enclosing function is the `@staticmethod` itself, not a parameter, and has no local `Store`-context binding anywhere in that function's own scope (skipping nested scopes) |
+| CH050 | dict comprehension key never varies per iteration | `DictComp.key` has no reference to any `for`-target name or walrus target bound in a generator's `iter`/`ifs`, and contains no `Call` itself |
 
 Each lives in its own file with a module docstring explaining the bug and a
 real-world example of where it was found.

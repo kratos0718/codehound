@@ -188,6 +188,26 @@ def attr_call_parts(node: ast.AST):
     return None, attr
 
 
+UNRESOLVED = object()
+
+
+def literal_value(node: ast.expr):
+    """A hashable Python value equal to what a literal `node` evaluates
+    to, for comparing two AST literals the way Python's own runtime
+    equality would (so e.g. ``1``, ``1.0``, and ``True`` compare equal,
+    matching how they collide as the same dict key or set element).
+    Returns ``UNRESOLVED`` for anything not staticaly knowable this way
+    - a name, a call, an arbitrary expression."""
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Tuple):
+        elements = [literal_value(elt) for elt in node.elts]
+        if any(e is UNRESOLVED for e in elements):
+            return UNRESOLVED
+        return tuple(elements)
+    return UNRESOLVED
+
+
 # --- Inline suppression (# noqa) --------------------------------------------------
 
 _NOQA_RE = re.compile(r"#\s*noqa\b(?::\s*(?P<codes>[A-Za-z0-9_, ]+))?", re.IGNORECASE)

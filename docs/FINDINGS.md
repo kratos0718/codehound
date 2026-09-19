@@ -1,14 +1,20 @@
 # Findings in the wild
 
-Eight of the thirty-nine `codehound` rules were distilled from a bug
+Eight of the fifty `codehound` rules were distilled from a bug
 found in a real, widely-used open-source project, with the fix submitted
-as a pull request. The rest (CH007-CH009, CH012-CH039) are hardening
+as a pull request. The rest (CH007-CH009, CH012-CH050) are hardening
 rules verified through real false positives against a ~29-framework
 validation corpus instead of a found-and-merged bug - see "Notes on
 precision" below for why, and what that absence itself says. CH026,
-CH029, CH034, CH036, and CH038 are partial exceptions: each found real,
-previously-unreported bugs on their first scan, but not all of them
-have a PR yet - see "Real bugs found, not yet filed" below.
+CH029, CH034, CH036, CH038, CH045, CH046, and CH047 are partial
+exceptions: each found real, previously-unreported bugs on their
+first scan, but not all of them have a PR yet - see "Real bugs found,
+not yet filed" below.
+
+Three more checks were built, corpus-scanned, and **rejected outright**
+this same round, joining the same discipline that turned down
+`exception-chaining` and `cancelled-error-swallowed` earlier - see the
+end of "Notes on precision" for all three and why.
 
 | Rule | Project | ⭐ | The bug | Fix |
 |------|---------|----|---------|-----|
@@ -398,6 +404,118 @@ the false positives a naive grep would have reported:
   across ~29 frameworks - an honest null in the same category as CH008
   and CH035, not evidence the check is wrong, just that well-maintained
   codebases don't happen to make this specific mistake.
+- **CH040-CH044, CH048: five checks with zero false-positive risk,
+  verified directly, that needed no narrowing pass.** `pytest.raises(Exception)`
+  was confirmed to swallow a bare `assert False` from inside the block
+  (CH040). `contextlib.suppress()` with no arguments was confirmed to
+  let a real `ValueError` through untouched, the same shape as CH035
+  one API up (CH041). A duplicate `except ValueError:` clause was
+  confirmed to leave the second one dead - only the first handler ever
+  runs (CH042). `float('nan') == float('nan')` was confirmed `False`,
+  and so was every other NaN equality comparison tried (CH043). A
+  nested function doing `count += 1` without `nonlocal count` was
+  confirmed to raise `UnboundLocalError` on the very first call
+  (CH044). `assert (x, "message")` was confirmed to always pass,
+  matching the `SyntaxWarning: assertion is always true` CPython's own
+  compiler already emits for it (CH048). All five came back with zero
+  or single-digit corpus hits - CH040's 29 hits are the exception,
+  entirely in test files using the exact `pytest.raises(Exception)`/
+  `assertRaises(Exception)` anti-pattern the check describes.
+- **CH045/CH046 compare AST literals by real Python equality, not
+  `(type, value)` pairs - a precision decision made before any corpus
+  scan, not after one.** `1`, `1.0`, and `True` genuinely collide as
+  the same dict key or set element at runtime (verified directly:
+  `{True: 1, 1: 2}` is `{True: 2}`); comparing by `(type(value), value)`
+  instead would have missed exactly that collision. Both checks share
+  one `literal_value()` helper in `core.py` for this reason, rather
+  than duplicating the comparison logic per check.
+- **CH047's design is deliberately narrow, matching the discipline of
+  not guessing at partial protection.** It only recognizes a bare
+  top-level `yield` in the function body, or one inside a `try` with no
+  `finally`, with something else after it at that same block level -
+  it doesn't try to reason about an `except` clause that partially
+  protects the cleanup, or a `yield` nested inside an `if`/`for`. A
+  generator with exactly one `yield` and nothing after it is
+  unconditionally safe and untouched by this check, by construction.
+- **CH049, three real false positives on the first corpus scan, all
+  sharing one root cause, fixed with one rule.** vllm's `shm_broadcast.py`
+  has `create_from_handle`, a `@staticmethod` factory that opens with
+  `self = MessageQueue.__new__(MessageQueue)` - a well-known "manually
+  build the instance" idiom, so every later `self.x = ...` is
+  completely ordinary. litellm's `proxy/utils.py` has `cls = type(resolved)`
+  partway through an unrelated static method, reusing the name for a
+  plain local variable. agno's `bedrock.py` reads `cls` only inside
+  `{cls.__module__... for cls in type(client).__mro__}` - a set
+  comprehension's own `for cls in ...`, Python 3's own separate
+  comprehension scope, unrelated to the enclosing method. All three
+  bind the name to *something*, just not via a parameter - fixed by
+  checking for *any* local `Store`-context binding of the name
+  anywhere in the method's own scope (a plain assignment, a
+  comprehension's generator target, anything short of a further-nested
+  function), not just a parameter list. Zero hits after the fix.
+- **CH050, 18 real hits collapsed to 1 by recognizing one specific,
+  extremely common idiom.** The first pass (bugbear's actual B035
+  scope: does the key reference any `for`-loop target) matched
+  `{doc_hash: doc_id for doc_id, doc in items.items() if (doc_hash := doc.get("doc_hash"))}`
+  in llama_index, vllm, agno, pydantic-ai, and litellm - all the exact
+  same shape, filtering *and* deriving the key in the same walrus
+  expression inside the generator's `if` clause. `doc_hash` never
+  appears in the `for` target, but it's freshly bound on every
+  iteration all the same. Fixed by also collecting walrus targets from
+  every generator's `iter` and `ifs`, not just its `for` target, as
+  names that "vary per iteration." The one hit that survived - AutoGPT's
+  `execution.py`, a `{"payload": exec.input_data.get("payload") for exec
+  in ... if <webhook-type filter>}` - is honestly ambiguous: the
+  literal key is unusual, but sits right next to an identically-styled
+  comprehension with a real per-item key, suggesting the author expects
+  at most one matching item and is using the fixed key deliberately.
+  Left flagged rather than special-cased away, since "expects at most
+  one match" is exactly the kind of assumption worth a second look.
+
+**Three checks built, corpus-scanned, and rejected outright this same
+round - not shipped, not narrowed, deleted:**
+
+- **`assignment-from-sort-or-reverse`** (`x = some_list.sort()` captures
+  `None`, since `.sort()`/`.reverse()` mutate in place) came back with
+  78 corpus hits, and reading through a broad sample found zero real
+  `list.sort()` bugs - every single one was a *different* `.sort()`
+  with a different contract: `np.sort(x)` (NumPy, returns a new array,
+  takes the array as an argument rather than a receiver), PyMongo's
+  `Cursor.sort()` (returns the cursor for chaining), HuggingFace
+  `Dataset.sort()` (returns a new sorted Dataset), polars/pandas
+  `DataFrame.sort()`, and several hand-written `SomeUtils.sort(items, key)`
+  static helpers. There's no AST-only way to tell "this `.sort()` is
+  really `list.sort()`" from all of these without type inference, so
+  the premise itself doesn't hold at real-world scale - rejected, not
+  narrowed.
+- **`enum-duplicate-value`** (two `Enum` members sharing a value become
+  silent aliases) came back with 6 hits, and every single real-code
+  instance checked (AutoGPT's `AnthropicModelName`, letta's
+  `PrimitiveType`, vllm's `Mxfp4MoeBackend`) was an explicitly
+  commented, deliberate "rolling alias" or "legacy name during a
+  rename" pattern - three for three, matching the exact "the first
+  real hits checked turned out to be correct code" rejection criteria
+  used for `cancelled-error-swallowed` earlier. Enum aliasing is a
+  well-known, intentional technique, not an accident waiting to be
+  caught.
+- **`eq-without-hash`** (a class defining `__eq__` without `__hash__`
+  becomes unhashable, even with a base class `__hash__`) came back with
+  162 hits - every sample checked, across mlflow's entire `entities/`
+  module and value-object classes in vllm, `datasets`, dspy, and
+  langchain, was a hand-written value/result object that was never
+  intended to be hashable in the first place, the exact same tradeoff
+  `@dataclass` makes on purpose (already excluded from this check for
+  that reason). Technically correct about Python's behavior on every
+  single hit; practically indistinguishable from `@dataclass`'s own
+  accepted default at the volume real code actually produces it.
+  A follow-up replacement, `abstract-stub-missing-decorator` (an empty
+  method on an ABC that isn't `@abstractmethod`, sitting next to real
+  ones - flake8-bugbear's B027), was built, scanned, and rejected the
+  same way: 142 hits, and both samples read in full (AutoGPT's
+  `AppProcess.cleanup()`, mlflow's `RateLimiter.report_throttle()`)
+  had a docstring literally saying "Implement this on a subclass" or
+  "No-op by default" - the classic, intentional Template Method
+  "optional hook" pattern, not a forgotten decorator.
 
 These are why the test suite asserts *both* directions: bad code flagged, good code
 left alone.
@@ -591,6 +709,59 @@ Two more real bugs found the same way, in different checks:
   - the reason this one isn't filed is the same "don't ship a fix
   you're not confident is the *right* fix" bar applied to the
   `datasets`/CH036 finding above, not a policy conflict.
+- **CH045 (`duplicate-dict-key`) in llama_index's Cortex LLM
+  integration.** `base.py`'s payload builder has
+  `{"url": self.cortex_complete_endpoint, "url": self.cortex_complete_endpoint, "headers": {...}, ...}`
+  - the exact same key/value pair written twice, at two separate call
+  sites in the same file (lines 258 and 411). Both values happen to be
+  identical, so nothing crashes, but the duplication almost certainly
+  means a different key/field was intended for the second line and got
+  overwritten by a copy-paste - the request payload is missing
+  whatever that field was meant to be. llama_index has no AI-disclosure
+  conflict; not yet filed only because the *actual* missing field
+  hasn't been identified - fixing the visible duplication without
+  knowing what should replace it would just swap one incomplete
+  payload for another.
+- **CH046 (`duplicate-set-value`) in transformers' GPT-SW3 tokenizer -
+  a genuinely hard-to-spot one.** `tokenization_gpt_sw3.py` builds
+  `self.whitespaces = {" ", " ", " ", " ", " ", "　", " ", " ", " ", " ", "￼", ""}`
+  for whitespace normalization - eight of those look like blank spaces
+  to a human eye, and several of them are, byte-for-byte, the *same*
+  Unicode whitespace character repeated, not eight distinct ones as
+  the line's evident intent (normalize every kind of whitespace) would
+  suggest. This is exactly the kind of bug this project exists for:
+  it's invisible on a code review pass, because the whole point of the
+  characters involved is that they render identically. Not filed -
+  transformers' `CLAUDE.md` is a confirmed AI-disclosure-required repo
+  (see the CH026 section above) - but pinning down exactly which
+  Unicode code points are missing from the set (versus merely
+  duplicated) needs a careful character-by-character audit this
+  session didn't do, on top of the policy conflict.
+- **CH047 (`contextmanager-yield-unprotected`) - four real, distinct
+  hits, three of which have no AI-disclosure conflict and are ready to
+  file.** litellm's `repositories/unit_of_work.py` has
+  `spend_reset_unit_of_work`/`budget_cascade_unit_of_work`: both
+  `yield SomeUnitOfWork(...)` then `await batch.commit()` with nothing
+  in between - if the caller's code raises, the batch is never
+  committed *and* never rolled back, left in an undefined state.
+  peft's `tuners/boft/layer.py` (and two sibling files, `lora/model.py`,
+  `road/model.py`) has a temporary-environment-variable context
+  manager: sets `os.environ` values, `yield`s, restores them
+  afterward - if the wrapped code raises, the restore never runs,
+  leaking the overridden env vars for the rest of the process. agno's
+  `os/app.py` has two FastAPI lifespan managers (`mcp_lifespan`,
+  `http_client_lifespan`) that close MCP connections and an httpx
+  client pool after `yield` - any startup/shutdown-time error skips
+  that cleanup, leaking connections. litellm and peft have **no**
+  AI-disclosure conflict (litellm's `CLAUDE.md` actually explicitly
+  *forbids* AI attribution, matching this project's own policy exactly
+  - the same repo PR #41582 was already filed to earlier this session);
+  agno has no such policy either (matching every prior agno PR filed
+  this session). mlflow's `utils/autologging_utils/__init__.py`
+  (`batch_metrics_logger.flush()` after `yield`) has the same shape but
+  **does** have the confirmed `CLAUDE.md` conflict. None of the four
+  filed yet in this round - queued as the strongest, most policy-clean
+  candidates for the next PR pass.
 
 ## Bugs the tool found on its own
 
