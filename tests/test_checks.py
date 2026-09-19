@@ -391,6 +391,21 @@ def test_ch009_ignores_thread_handed_off_via_another_objects_attribute():
     assert _run(code, ["CH009"]) == []
 
 
+def test_ch009_ignores_thread_appended_to_attribute_list():
+    code = (
+        "import threading\n"
+        "class Supervisor:\n"
+        "    def spawn(self):\n"
+        "        t = threading.Thread(target=work)\n"
+        "        t.start()\n"
+        "        self.threads.append(t)\n"
+        "    def join_all(self):\n"
+        "        for t in self.threads:\n"
+        "            t.join()\n"
+    )
+    assert _run(code, ["CH009"]) == []
+
+
 def test_ch009_ignores_daemon_set_after_construction():
     code = (
         "import threading\n"
@@ -668,6 +683,32 @@ def test_ch011_still_flags_pydantic_model_without_frozen_config():
     assert findings[0].code == "CH011"
 
 
+def test_ch011_ignores_same_named_decorator_from_a_different_module():
+    # Real false positive found in SQLAlchemy: dialect classes use
+    # @reflection.cache on dozens of methods - same bare attribute name as
+    # functools.cache, but it's SQLAlchemy's own decorator, only caches when
+    # the caller passes an explicit info_cache dict, and doesn't retain self
+    # anywhere the way functools.lru_cache's own persistent cache does.
+    code = (
+        "from myapp import reflection\n"
+        "class Dialect:\n"
+        "    @reflection.cache\n"
+        "    def has_table(self, connection, table_name):\n"
+        "        return True\n"
+    )
+    assert _run(code, ["CH011"]) == []
+
+
+def test_ch011_ignores_bare_cache_name_not_imported_from_functools():
+    code = (
+        "class Dialect:\n"
+        "    @cache\n"
+        "    def has_table(self, connection, table_name):\n"
+        "        return True\n"
+    )
+    assert _run(code, ["CH011"]) == []
+
+
 # --- CH012 floating-process ----------------------------------------------------------
 
 
@@ -711,6 +752,24 @@ def test_ch012_ignores_process_returned_to_caller():
         "    p = multiprocessing.Process(target=work)\n"
         "    p.start()\n"
         "    return p\n"
+    )
+    assert _run(code, ["CH012"]) == []
+
+
+def test_ch012_ignores_process_appended_to_attribute_list():
+    # Real false positive found in uvicorn's multi-worker supervisor:
+    # self.processes.append(process) right after .start(), with a separate
+    # join_all() elsewhere in the class joining everything in self.processes.
+    code = (
+        "import multiprocessing\n"
+        "class Supervisor:\n"
+        "    def init_processes(self):\n"
+        "        process = multiprocessing.Process(target=work)\n"
+        "        process.start()\n"
+        "        self.processes.append(process)\n"
+        "    def join_all(self):\n"
+        "        for process in self.processes:\n"
+        "            process.join()\n"
     )
     assert _run(code, ["CH012"]) == []
 
@@ -1469,6 +1528,21 @@ def test_ch028_ignores_timer_that_is_cancelled():
         "    t = threading.Timer(30, callback)\n"
         "    t.start()\n"
         "    t.cancel()\n"
+    )
+    assert _run(code, ["CH028"]) == []
+
+
+def test_ch028_ignores_timer_appended_to_attribute_list():
+    code = (
+        "import threading\n"
+        "class Supervisor:\n"
+        "    def schedule(self):\n"
+        "        t = threading.Timer(30, callback)\n"
+        "        t.start()\n"
+        "        self.timers.append(t)\n"
+        "    def cancel_all(self):\n"
+        "        for t in self.timers:\n"
+        "            t.cancel()\n"
     )
     assert _run(code, ["CH028"]) == []
 
@@ -2521,6 +2595,32 @@ def test_ch049_ignores_cls_assigned_as_ordinary_local():
         "    def method(value):\n"
         "        cls = type(value)\n"
         "        return cls.__name__\n"
+    )
+    assert _run(code, ["CH049"]) == []
+
+
+def test_ch049_ignores_self_in_decorator_expression():
+    code = (
+        "class T:\n"
+        "    def test_it(self):\n"
+        "        class Alpha:\n"
+        "            @staticmethod\n"
+        "            @self.app.task(shared=False)\n"
+        "            def handler(x):\n"
+        "                return x\n"
+    )
+    assert _run(code, ["CH049"]) == []
+
+
+def test_ch049_ignores_locally_defined_class_closing_over_outer_self():
+    code = (
+        "class Outer:\n"
+        "    def make(self):\n"
+        "        class Inner:\n"
+        "            @staticmethod\n"
+        "            def helper():\n"
+        "                return self.value\n"
+        "        return Inner\n"
     )
     assert _run(code, ["CH049"]) == []
 

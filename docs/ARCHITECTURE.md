@@ -93,7 +93,7 @@ src/codehound/
 └── __init__.py      # public API surface + __version__
 ```
 
-~5,800 lines of source, zero runtime dependencies (standard-library `ast` only).
+~5,900 lines of source, zero runtime dependencies (standard-library `ast` only).
 
 ## The core contract
 

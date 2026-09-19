@@ -453,6 +453,26 @@ the false positives a naive grep would have reported:
   anywhere in the method's own scope (a plain assignment, a
   comprehension's generator target, anything short of a further-nested
   function), not just a parameter list. Zero hits after the fix.
+- **CH049 again, a second scan across a wider set of frameworks found
+  two more real false positives - both about scope in ways deeper than
+  the first pass.** celery's `test_app.py` stacks
+  `@staticmethod` / `@self.app.task(shared=False)` on the same
+  function - `self` there is in the *decorator expression*, evaluated
+  in the enclosing test method's scope before `@staticmethod` ever
+  applies, not inside the static method's own body; the check was
+  walking the whole `FunctionDef` node, decorator list included, not
+  just the body. pytest's `pytester.py` defines a whole class - and a
+  `@staticmethod` on it - *inside* another method, and that nested
+  method's body reads `self`, which resolves via an ordinary closure
+  to the *outer* method's `self` (verified directly: a class defined
+  inside a method, with a `@staticmethod` reading `self`, correctly
+  returns the outer instance's attribute - `@staticmethod` doesn't
+  change how Python resolves free variables, only how the method is
+  called). Fixed by scanning only `node.body` for suspect names, and
+  by skipping entirely when the `@staticmethod`'s own class is itself
+  nested inside a function - too much real closure ambiguity to guess
+  at safely. Zero hits across the full combined corpus after both
+  fixes.
 - **CH050, 18 real hits collapsed to 1 by recognizing one specific,
   extremely common idiom.** The first pass (bugbear's actual B035
   scope: does the key reference any `for`-loop target) matched
@@ -516,6 +536,47 @@ round - not shipped, not narrowed, deleted:**
   had a docstring literally saying "Implement this on a subclass" or
   "No-op by default" - the classic, intentional Template Method
   "optional hook" pattern, not a forgotten decorator.
+- **CH011, a real precision gap found by scanning a wider corpus long
+  after the check shipped - not a new check, a live one getting more
+  scrutiny.** The original design trusted any decorator literally named
+  `lru_cache`/`cache`, matched by bare attribute name only. Scanning
+  SQLAlchemy (not part of the original ~29-framework corpus) turned up
+  ~94 hits concentrated in its dialect classes (`PGDialect`,
+  `MySQLDialect`, …), all using `@reflection.cache` on reflection
+  methods (`has_table`, `get_columns`, …) - same bare attribute name as
+  `functools.cache`, a completely different decorator. Read its actual
+  implementation (`sqlalchemy/engine/reflection.py`): it only caches
+  when the *caller* passes an explicit `info_cache` dict keyword
+  argument, and that dict is the caller's own object, not anything
+  attached to the function or retaining `self` the way
+  `functools.lru_cache`'s real, persistent, function-attached cache
+  does. Fixed by only trusting a bare `lru_cache`/`cache` name when
+  `from functools import lru_cache`/`cache` was actually seen in the
+  file (or the full `functools.lru_cache`/`functools.cache` attribute
+  form) - the same "don't trust a bare name without seeing where it
+  came from" discipline CH018/CH022/CH028/CH041 already use. Cut
+  SQLAlchemy's hits from ~94 to the ones actually using real
+  `functools.lru_cache` (still present, on long-lived per-engine
+  dialect singletons - the same "leak is meaningless, the instance was
+  always going to live for the process lifetime" category as mlflow's
+  registry.py, not a new bug).
+- **CH009/CH012/CH028, a missing escape shared by three checks that
+  CH016/CH027/CH031 already had.** All six "floating primitive" checks
+  are meant to treat a thread/process/timer/socket/subprocess/pool
+  handed off - returned, stored as any object's attribute, or passed
+  as an argument to another call - as intentional, not a leak. CH016
+  (sockets) and CH027 (subprocesses) and CH031 (pools) already
+  recognized "passed as an argument to any call" as an escape; CH009
+  (threads), CH012 (processes), and CH028 (timers) only recognized
+  direct attribute assignment (`self.x = handle`), missing the
+  syntactically different "appended to a collection that's itself an
+  attribute" shape (`self.processes.append(process)`). Found via a
+  real false positive in uvicorn's multi-worker supervisor:
+  `self.processes.append(process)` right after `.start()`, with a
+  separate `join_all()` method elsewhere in the same class iterating
+  `self.processes` and joining every one - confirmed by reading that
+  method, not assumed. Fixed by porting the exact same "passed as an
+  argument to any call" check into all three.
 
 These are why the test suite asserts *both* directions: bad code flagged, good code
 left alone.
@@ -762,6 +823,55 @@ Two more real bugs found the same way, in different checks:
   **does** have the confirmed `CLAUDE.md` conflict. None of the four
   filed yet in this round - queued as the strongest, most policy-clean
   candidates for the next PR pass.
+- **CH047, five more real hits, found by widening the corpus past the
+  original ~29 frameworks specifically to look for more.** SQLAlchemy's
+  `InvokeCreateDDLBase.with_ddl_events`/`InvokeDropDDLBase.with_ddl_events`
+  (`sql/ddl.py`) both dispatch a `before_create`/`before_drop` event,
+  `yield` (the actual DDL statement runs in the with-block body), then
+  dispatch `after_create`/`after_drop` - if the DDL execution itself
+  fails (a real, unremarkable possibility for any live database
+  operation), the `after_*` event never fires, silently breaking
+  anything relying on it for tracking or logging schema changes.
+  Poetry's `FileConfigSource.secure()` (`config/file_config_source.py`)
+  `yield`s a `TOMLDocument` for the caller to modify, then - the
+  method's own name and comment ("Ensuring the file is only readable
+  and writable by the current user") - writes it with `0o600`
+  permissions; if the caller's modification raises before the
+  with-block exits, the write (and the restrictive-permissions
+  guarantee its own name promises) never happens at all, silently. A
+  fifth, lower-confidence one: SQLAlchemy's `ToolCommandBase.run_program`
+  (`util/tool_support.py`) sets flags, `yield`s the actual CLI work,
+  then checks `if self.args.check and self.diffs_detected: sys.exit(1)`
+  - real if something upstream swallows exceptions from the CLI run,
+  not traced far enough to be certain. Two more real hits are lower
+  severity by nature rather than by luck: Flask's own
+  `FlaskClient.session_transaction` (`testing.py`) has the identical
+  shape (`yield sess` then an unprotected session-save-back its own
+  docstring promises always happens) but it's a *test* helper - a
+  failing assertion inside the block already fails the test either
+  way, so the skipped save-back rarely changes the outcome anyone
+  observes. Celery's `t/unit/app/test_backends.py` test fixture starts
+  a background worker thread, `yield`s it to the test, then
+  `worker.stop()`/`t.join(10.0)` afterward - unprotected, so a failing
+  assertion inside a test using this fixture leaks a running daemon
+  thread for the rest of the pytest session, a real (if test-only)
+  resource leak rather than a merely-cosmetic one. None of these five
+  filed yet - found and read in full, but this round's effort went
+  into fixing codehound's own checks (see "Notes on precision" above)
+  rather than also filing PRs across five more repos in the same pass.
+- **CH009, one plausible hit surfaced while re-scanning after the
+  append-escape fix.** langgraph's CLI analytics decorator
+  (`analytics.py`) does `background_thread = threading.Thread(target=log_data,
+  args=(data,)); background_thread.start()` immediately before
+  `return func(*args, **kwargs)` - a short-lived CLI command can
+  plausibly exit before the background thread finishes sending its
+  telemetry payload, silently dropping the event. The same shape as
+  this project's very first self-found bug (agno's fire-and-forget
+  `asyncio.create_task` for tracing, PR #8183) - a background
+  reliability task racing the process it's attached to - just for a
+  thread and a CLI process instead of a task and an event loop. Lower
+  stakes (a missed analytics ping, not a lost trace in a running
+  service) and not traced further this round.
 
 ## Bugs the tool found on its own
 

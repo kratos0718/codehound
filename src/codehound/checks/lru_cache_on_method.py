@@ -25,6 +25,22 @@ memoization on an immutable type, not a leak). The cache still only ever
 holds as many distinct instances as there are distinct field-value
 combinations seen, capped at `maxsize`, which is the same bound an
 equivalent free function cached by value would have.
+
+Only trusts a decorator literally named `lru_cache`/`cache` when it can
+actually be `functools`'s - either `@functools.lru_cache`/`@functools.cache`
+by full attribute access, or a bare `@lru_cache`/`@cache` where
+`from functools import lru_cache`/`cache` was actually seen in the file.
+Scanning a wider corpus than the original one turned up a real, sizeable
+false-positive class this guard didn't have at first: SQLAlchemy's dialect
+classes use `@reflection.cache` on dozens of reflection methods (`has_table`,
+`get_columns`, …) - same bare attribute name, completely different
+decorator. Read its actual implementation: it only caches when the caller
+explicitly passes an `info_cache` dict keyword argument, and that dict is
+the *caller's* object, not anything attached to the function or the class -
+nothing about it retains `self` past the call the way `functools.lru_cache`'s
+own persistent, function-attached cache does. Same "don't trust a bare name
+without seeing where it came from" discipline CH018/CH022/CH028/CH041
+already use for other stdlib names.
 """
 
 from __future__ import annotations
@@ -36,12 +52,26 @@ from codehound.core import Check, Finding
 _CACHE_DECORATOR_NAMES = {"lru_cache", "cache"}
 
 
-def _is_cache_decorator(node: ast.expr) -> bool:
+def _imported_cache_names(tree: ast.AST) -> set[str]:
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "functools":
+            for alias in node.names:
+                if alias.name in _CACHE_DECORATOR_NAMES:
+                    names.add(alias.asname or alias.name)
+    return names
+
+
+def _is_cache_decorator(node: ast.expr, trusted_bare_names: set[str]) -> bool:
     target = node.func if isinstance(node, ast.Call) else node
     if isinstance(target, ast.Name):
-        return target.id in _CACHE_DECORATOR_NAMES
+        return target.id in trusted_bare_names
     if isinstance(target, ast.Attribute):
-        return target.attr in _CACHE_DECORATOR_NAMES
+        return (
+            target.attr in _CACHE_DECORATOR_NAMES
+            and isinstance(target.value, ast.Name)
+            and target.value.id == "functools"
+        )
     return False
 
 
@@ -117,6 +147,7 @@ class LruCacheOnMethod(Check):
 
     def run(self, tree: ast.AST, parents: dict, path: str) -> list[Finding]:
         findings: list[Finding] = []
+        trusted_bare_names = _imported_cache_names(tree)
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -130,7 +161,7 @@ class LruCacheOnMethod(Check):
             if not node.args.args or node.args.args[0].arg not in ("self",):
                 continue
             for dec in node.decorator_list:
-                if not _is_cache_decorator(dec):
+                if not _is_cache_decorator(dec, trusted_bare_names):
                     continue
                 findings.append(
                     Finding(

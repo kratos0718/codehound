@@ -25,6 +25,15 @@ gets joined later once the caller finishes consuming the stream
 (``chat_engine/types.py``). The escape check below treats a thread
 assigned as *any* object's attribute as a deliberate hand-off, not just
 ``self.<attr>``.
+
+Also escaped if passed as an argument to any other call - the same rule
+CH016/CH027 already needed. Found missing here by a real false positive
+in uvicorn's multi-worker supervisor (technically CH012, the
+`multiprocessing.Process` analog, but the exact same escape logic):
+`self.processes.append(process)` right after `.start()`, with a
+`join_all()` method elsewhere in the class joining everything in
+`self.processes` - not a direct attribute assignment, so the existing
+guard never saw it.
 """
 
 from __future__ import annotations
@@ -112,6 +121,16 @@ class FloatingThread(Check):
                         started = True
                     elif n.func.attr == "join":
                         joined = True
+                elif isinstance(n, ast.Call):
+                    # Passed as an argument to any other call - e.g.
+                    # self.threads.append(t) - the same escape CH016/CH027
+                    # already needed for sockets/subprocesses.
+                    for arg in n.args:
+                        if isinstance(arg, ast.Name) and arg.id == name:
+                            escapes = True
+                    for kw in n.keywords:
+                        if isinstance(kw.value, ast.Name) and kw.value.id == name:
+                            escapes = True
                 elif isinstance(n, ast.Assign):
                     for tgt in n.targets:
                         if (

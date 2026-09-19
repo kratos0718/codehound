@@ -38,6 +38,24 @@ of any read - the crash this check exists to catch only happens when
 the name is read without ever being bound at all, anywhere in the
 method's own scope.
 
+A second corpus scan, run across a wider set of frameworks, found two
+more real false positives, both about scope in ways the first pass
+didn't account for: celery's `test_app.py` has
+`@staticmethod` / `@self.app.task(shared=False)` stacked on the same
+function - `self` there is in the *decorator expression*, which is
+evaluated in the enclosing test method's scope before `@staticmethod`
+ever applies, not inside the static method's own body. pytest's
+`pytester.py` defines a whole class - and a `@staticmethod` on it -
+*inside* another method, and that nested method's body reads `self`,
+which resolves via an ordinary closure to the *outer* method's `self`
+(verified directly: a class defined inside a method, with a
+`@staticmethod` reading `self`, correctly returns the outer instance's
+attribute - Python's closure rules don't care that `@staticmethod`
+was applied). Fixed by only scanning `node.body` for suspect names
+(never the decorator list), and by skipping entirely when the
+`@staticmethod`'s own class is itself nested inside a function -
+too much real closure ambiguity to guess at safely.
+
 Only checks references whose nearest enclosing function is the static
 method itself, not a `def`/`lambda` nested inside it - a nested helper
 that binds its own `self`/`cls` parameter is unambiguously fine, and
@@ -49,7 +67,7 @@ from __future__ import annotations
 
 import ast
 
-from codehound.core import Check, Finding, enclosing_function
+from codehound.core import Check, Finding, enclosing_class, enclosing_function
 
 _SUSPECT_NAMES = {"self", "cls"}
 
@@ -66,6 +84,14 @@ def _param_names(func: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
 
 def _is_staticmethod(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return any(isinstance(d, ast.Name) and d.id == "staticmethod" for d in func.decorator_list)
+
+
+def _class_is_locally_defined(func: ast.FunctionDef | ast.AsyncFunctionDef, parents: dict) -> bool:
+    """True if the class containing `func` is itself nested inside a
+    function - its methods can then legitimately close over that
+    outer function's own variables, including ones named self/cls."""
+    cls = enclosing_class(func, parents)
+    return cls is not None and enclosing_function(cls, parents) is not None
 
 
 def _has_local_binding(node: ast.AST, name: str) -> bool:
@@ -93,13 +119,16 @@ class StaticmethodReferencesSelf(Check):
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or not _is_staticmethod(node):
                 continue
+            if _class_is_locally_defined(node, parents):
+                continue
             params = _param_names(node)
             names_to_check = _SUSPECT_NAMES - params
-            names_to_check = {n for n in names_to_check if not _has_local_binding(node, n)}
+            names_to_check = {n for n in names_to_check if not any(_has_local_binding(stmt, n) for stmt in node.body)}
             if not names_to_check:
                 continue
             reported: set[str] = set()
-            for inner in ast.walk(node):
+            body_nodes = [n for stmt in node.body for n in ast.walk(stmt)]
+            for inner in body_nodes:
                 if not (isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Load) and inner.id in names_to_check):
                     continue
                 if enclosing_function(inner, parents) is not node:

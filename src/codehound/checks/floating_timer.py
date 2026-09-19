@@ -28,6 +28,12 @@ class (`from agno.utils.timer import Timer`, called as `Timer()` with no
 arguments at all - `threading.Timer` requires `interval` and `function`
 and would raise `TypeError` immediately if it were really that class),
 and every one of its ~30 corpus hits was this same collision.
+
+Also escaped if passed as an argument to any other call - e.g.
+``self.timers.append(t)`` - the same rule CH016/CH027 already needed and
+CH009/CH012 also picked up after a real false positive in uvicorn's
+multi-worker supervisor (`self.processes.append(process)`, joined later
+by a separate `join_all()` iterating the list).
 """
 
 from __future__ import annotations
@@ -126,6 +132,16 @@ class FloatingTimer(Check):
                         started = True
                     elif n.func.attr == "cancel":
                         cancelled = True
+                elif isinstance(n, ast.Call):
+                    # Passed as an argument to any other call - e.g.
+                    # self.timers.append(t) - the same escape CH016/CH027
+                    # already needed for sockets/subprocesses.
+                    for arg in n.args:
+                        if isinstance(arg, ast.Name) and arg.id == name:
+                            escapes = True
+                    for kw in n.keywords:
+                        if isinstance(kw.value, ast.Name) and kw.value.id == name:
+                            escapes = True
                 elif isinstance(n, ast.Assign):
                     for tgt in n.targets:
                         if (

@@ -7,6 +7,17 @@ in-process thread the GC eventually notices. Same two shapes, same escape
 rules: a thread/process handed off via a return value or stashed as any
 object's attribute is an intentional hand-off, not a leak (see CH009 for
 the real llama_index false positive that shaped this rule).
+
+Also escaped if the name is passed as an argument to any call other than
+a method called *on* the process itself (`.start()`, `.join()`, …) - the
+same rule CH016/CH027 already needed for sockets/subprocesses, extended
+here after a real false positive in uvicorn's multi-worker supervisor:
+`self.processes.append(process)` right after `.start()`, with a separate
+`join_all()` method elsewhere in the same class iterating `self.processes`
+and joining each one. `self.processes.append(...)` isn't a direct
+attribute assignment (`self.x = process`), so the existing "stored as an
+attribute" check never saw it - it's `process` passed as an *argument* to
+a call on a *different* object (`self.processes`, not `process` itself).
 """
 
 from __future__ import annotations
@@ -90,6 +101,13 @@ class FloatingProcess(Check):
                         started = True
                     elif n.func.attr in ("join", "close"):
                         joined = True
+                elif isinstance(n, ast.Call):
+                    for arg in n.args:
+                        if isinstance(arg, ast.Name) and arg.id == name:
+                            escapes = True
+                    for kw in n.keywords:
+                        if isinstance(kw.value, ast.Name) and kw.value.id == name:
+                            escapes = True
                 elif isinstance(n, ast.Assign):
                     for tgt in n.targets:
                         if (
