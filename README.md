@@ -12,6 +12,8 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21851079.svg)](https://doi.org/10.5281/zenodo.21851079)
 
+**[Try it in your browser — no install](https://kratos0718.github.io/codehound/)** — paste Python, click Scan, see real findings from all 50 checks. Runs entirely client-side via [Pyodide](https://pyodide.org) (Python compiled to WebAssembly); your code never leaves the page.
+
 Most linters flag style. `codehound` flags the *subtle correctness and async-safety bugs* that slip past code review and only bite in production — event-loop stalls, shared mutable state, leaked file descriptors, fire-and-forget tasks that get garbage-collected mid-run.
 
 Most of the checks below aren't theoretical. **I wrote them after finding — and fixing, via a merged pull request — that exact bug in a real, popular framework** (agno 25k⭐, crewAI 30k⭐, mem0, llama_index, accelerate).
