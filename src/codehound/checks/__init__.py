@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from codehound.checks.abstractmethod_without_abc import AbstractmethodWithoutAbc
 from codehound.checks.aliased_list_multiplication import AliasedListMultiplication
 from codehound.checks.argparse_store_true_default import ArgparseStoreTrueDefault
 from codehound.checks.assert_on_tuple import AssertOnTuple
@@ -16,15 +17,22 @@ from codehound.checks.blocking_async import BlockingCallInAsync
 from codehound.checks.collections_abc_import import CollectionsAbcImport
 from codehound.checks.contextmanager_yield_unprotected import ContextmanagerYieldUnprotected
 from codehound.checks.contextvar_mutable_default import ContextvarMutableDefault
+from codehound.checks.dataclass_non_default_after_default import DataclassNonDefaultAfterDefault
 from codehound.checks.datetime_utcnow import DeprecatedDatetimeUtcnow
+from codehound.checks.decorator_missing_functools_wraps import DecoratorMissingFunctoolsWraps
 from codehound.checks.decorator_missing_return import DecoratorMissingReturn
+from codehound.checks.deepcopy_self_with_lock import DeepcopySelfWithLock
+from codehound.checks.defaultdict_read_creates_key import DefaultdictReadCreatesKey
 from codehound.checks.dict_fromkeys_mutable_default import DictFromkeysMutableDefault
 from codehound.checks.discarded_future import DiscardedFuture
 from codehound.checks.duplicate_dict_key import DuplicateDictKey
 from codehound.checks.duplicate_except_handler import DuplicateExceptHandler
+from codehound.checks.duplicate_method_definition import DuplicateMethodDefinition
 from codehound.checks.duplicate_set_value import DuplicateSetValue
 from codehound.checks.duplicate_with_target import DuplicateWithTarget
 from codehound.checks.empty_except_tuple import EmptyExceptTuple
+from codehound.checks.empty_literal_sequence_crash import EmptyLiteralSequenceCrash
+from codehound.checks.enumerate_start_offset_reindex import EnumerateStartOffsetReindex
 from codehound.checks.environ_reassignment import EnvironReassignment
 from codehound.checks.falsy_and_or_ternary import FalsyAndOrTernary
 from codehound.checks.finally_swallows_exception import FinallySwallowsException
@@ -33,8 +41,11 @@ from codehound.checks.floating_task import FloatingTask
 from codehound.checks.floating_thread import FloatingThread
 from codehound.checks.floating_timer import FloatingTimer
 from codehound.checks.forwarded_without_unpacking import ForwardedWithoutUnpacking
+from codehound.checks.frozen_dataclass_post_init_mutation import FrozenDataclassPostInitMutation
 from codehound.checks.get_event_loop import DeprecatedGetEventLoop
 from codehound.checks.is_literal_comparison import IsLiteralComparison
+from codehound.checks.itertools_tee_original_reused import IteratorTeeOriginalReused
+from codehound.checks.json_dumps_datetime import JsonDumpsDatetime
 from codehound.checks.lock_constructed_inline import LockConstructedInline
 from codehound.checks.logging_extra_reserved_key import LoggingExtraReservedKey
 from codehound.checks.loop_closure_capture import LoopClosureCapture
@@ -44,13 +55,17 @@ from codehound.checks.mutable_class_attribute import MutableClassAttribute
 from codehound.checks.mutable_defaults import MutableDefaultArgument
 from codehound.checks.mutation_during_iteration import MutationDuringIteration
 from codehound.checks.namedtuple_mutable_default import NamedTupleMutableDefault
+from codehound.checks.namedtuple_non_default_after_default import NamedTupleNonDefaultAfterDefault
 from codehound.checks.nan_equality import NanEqualityComparison
 from codehound.checks.nondeterministic_default import NondeterministicDefault
 from codehound.checks.os_path_join_absolute_literal import OsPathJoinAbsoluteLiteral
 from codehound.checks.path_absolute_literal_join import PathAbsoluteLiteralJoin
 from codehound.checks.pointless_comparison import PointlessComparisonStatement
+from codehound.checks.python2_removed_dunder import Python2RemovedDunder
 from codehound.checks.raise_literal import RaiseLiteral
 from codehound.checks.regex_backspace_escape import RegexBackspaceEscape
+from codehound.checks.regex_flags_passed_as_count import RegexFlagsPassedAsCount
+from codehound.checks.repr_calls_str_recursion import ReprCallsStrRecursion
 from codehound.checks.reused_exhausted_iterator import ReusedExhaustedIterator
 from codehound.checks.removed_asyncio_task_methods import RemovedAsyncioTaskMethods
 from codehound.checks.removed_getargspec import RemovedGetargspec
@@ -58,8 +73,10 @@ from codehound.checks.removed_stdlib_attribute import RemovedStdlibAttribute
 from codehound.checks.removed_stdlib_module import RemovedStdlibModule
 from codehound.checks.resource_leak import UnclosedFileHandle
 from codehound.checks.slots_blocks_dict import SlotsBlocksDict
+from codehound.checks.slots_conflicts_class_variable import SlotsConflictsClassVariable
 from codehound.checks.static_dict_comprehension_key import StaticDictComprehensionKey
 from codehound.checks.staticmethod_references_self import StaticmethodReferencesSelf
+from codehound.checks.str_on_bytes import StrOnBytes
 from codehound.checks.strip_multichar import StripMultichar
 from codehound.checks.suppress_empty import SuppressEmpty
 from codehound.checks.threading_local_mutable_class_attr import ThreadingLocalMutableClassAttr
@@ -72,6 +89,7 @@ from codehound.checks.unittest_deprecated_alias import UnittestDeprecatedAlias
 from codehound.checks.unprotected_lock import UnprotectedLockAcquire
 from codehound.checks.unwaited_subprocess import UnwaitedSubprocess
 from codehound.checks.useless_expression import UselessExpressionStatement
+from codehound.checks.weakref_to_ephemeral_object import WeakrefToEphemeralObject
 from codehound.core import Check
 
 ALL_CHECKS: list[type[Check]] = [
@@ -145,6 +163,24 @@ ALL_CHECKS: list[type[Check]] = [
     LoggingExtraReservedKey,
     ContextvarMutableDefault,
     ThreadingLocalMutableClassAttr,
+    WeakrefToEphemeralObject,
+    IteratorTeeOriginalReused,
+    StrOnBytes,
+    EmptyLiteralSequenceCrash,
+    ReprCallsStrRecursion,
+    DuplicateMethodDefinition,
+    AbstractmethodWithoutAbc,
+    FrozenDataclassPostInitMutation,
+    DataclassNonDefaultAfterDefault,
+    NamedTupleNonDefaultAfterDefault,
+    SlotsConflictsClassVariable,
+    Python2RemovedDunder,
+    JsonDumpsDatetime,
+    DefaultdictReadCreatesKey,
+    DecoratorMissingFunctoolsWraps,
+    DeepcopySelfWithLock,
+    EnumerateStartOffsetReindex,
+    RegexFlagsPassedAsCount,
 ]
 
 
