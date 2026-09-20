@@ -2668,3 +2668,370 @@ def test_ch050_ignores_key_bound_by_walrus_in_if_clause():
     )
     assert _run(code, ["CH050"]) == []
 
+
+# --- CH051 mutation-during-iteration ------------------------------------------------------
+
+
+def test_ch051_flags_del_while_iterating_dict():
+    code = "def f(d):\n    for key, value in d.items():\n        if value is None:\n            del d[key]\n"
+    findings = _run(code, ["CH051"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH051"
+
+
+def test_ch051_flags_insert_new_key_while_iterating():
+    code = "def f(d):\n    for k in d:\n        d['new'] = 1\n"
+    assert len(_run(code, ["CH051"])) == 1
+
+
+def test_ch051_flags_list_remove_while_iterating():
+    code = "def f(lst):\n    for x in lst:\n        if x == 2:\n            lst.remove(x)\n"
+    assert len(_run(code, ["CH051"])) == 1
+
+
+def test_ch051_ignores_reassigning_the_loops_own_current_key():
+    code = "def f(output):\n    for key, value in output.items():\n        output[key] = value\n"
+    assert _run(code, ["CH051"]) == []
+
+
+def test_ch051_ignores_reassigning_the_loops_own_key_by_literal():
+    code = (
+        "def f(schema):\n"
+        "    for key, value in schema.items():\n"
+        "        if key == '$ref':\n"
+        "            schema['$ref'] = value\n"
+        "        else:\n"
+        "            schema[key] = value\n"
+    )
+    assert _run(code, ["CH051"]) == []
+
+
+def test_ch051_ignores_mutation_immediately_followed_by_break():
+    code = (
+        "def f(state_dict):\n"
+        "    for k in state_dict:\n"
+        "        if 'old.' in k:\n"
+        "            state_dict[k.replace('old.', 'new.')] = state_dict.pop(k)\n"
+        "            break\n"
+    )
+    assert _run(code, ["CH051"]) == []
+
+
+def test_ch051_ignores_list_append_while_iterating():
+    code = "def f(candidates):\n    for c in candidates:\n        candidates.append(c)\n"
+    assert _run(code, ["CH051"]) == []
+
+
+def test_ch051_flags_set_add_while_iterating():
+    code = "def f(s):\n    for x in s:\n        s.add(x)\n"
+    assert len(_run(code, ["CH051"])) == 1
+
+
+def test_ch051_ignores_mutation_of_a_different_collection():
+    code = "def f(d, other):\n    for k in d:\n        other[k] = 1\n"
+    assert _run(code, ["CH051"]) == []
+
+
+# --- CH052 forwarded-without-unpacking ------------------------------------------------------
+
+
+def test_ch052_flags_kwargs_forwarded_without_double_star():
+    code = "def outer(*args, **kwargs):\n    inner(*args, kwargs)\n"
+    findings = _run(code, ["CH052"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH052"
+
+
+def test_ch052_flags_args_forwarded_without_star():
+    code = "def outer(*args, **kwargs):\n    inner(args, **kwargs)\n"
+    assert len(_run(code, ["CH052"])) == 1
+
+
+def test_ch052_ignores_lone_bare_name_with_no_other_unpacking():
+    code = "def f(*args, **kwargs):\n    if len(args) == 2:\n        g(args)\n"
+    assert _run(code, ["CH052"]) == []
+
+
+def test_ch052_ignores_correctly_starred_forwarding():
+    code = "def outer(*args, **kwargs):\n    inner(*args, **kwargs)\n"
+    assert _run(code, ["CH052"]) == []
+
+
+def test_ch052_ignores_dict_merge_idiom():
+    code = "def f(*args, **kwargs):\n    g(*args, **dict(kwargs, **{'x': 1}))\n"
+    assert _run(code, ["CH052"]) == []
+
+
+# --- CH053 aliased-list-multiplication ------------------------------------------------------
+
+
+def test_ch053_flags_2d_grid_aliasing_that_is_later_mutated():
+    code = "def f(rows, cols):\n    grid = [[0] * cols] * rows\n    grid[0][0] = 99\n    return grid\n"
+    findings = _run(code, ["CH053"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH053"
+
+
+def test_ch053_flags_repeated_dict_literal_that_is_later_mutated():
+    code = "def f(n):\n    rows = [{}] * n\n    rows[0]['x'] = 1\n    return rows\n"
+    assert len(_run(code, ["CH053"])) == 1
+
+
+def test_ch053_ignores_repetition_never_indexed_and_mutated():
+    code = "def f(batch_size, h, w):\n    grids = {}\n    grids['shape'] = [[h, w]] * batch_size\n    return grids\n"
+    assert _run(code, ["CH053"]) == []
+
+
+def test_ch053_ignores_immutable_element_repetition():
+    code = "def f(n):\n    row = [0] * n\n    row[0] = 1\n    return row\n"
+    assert _run(code, ["CH053"]) == []
+
+
+# --- CH054 slots-blocks-dict ------------------------------------------------------
+
+
+def test_ch054_flags_self_dict_access_with_slots():
+    code = "class Foo:\n    __slots__ = ('x',)\n    def as_dict(self):\n        return self.__dict__\n"
+    findings = _run(code, ["CH054"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH054"
+
+
+def test_ch054_flags_cached_property_with_slots():
+    code = (
+        "from functools import cached_property\n"
+        "class Foo:\n"
+        "    __slots__ = ('x',)\n"
+        "    @cached_property\n"
+        "    def doubled(self):\n"
+        "        return self.x * 2\n"
+    )
+    assert len(_run(code, ["CH054"])) == 1
+
+
+def test_ch054_ignores_slots_including_dict():
+    code = "class Foo:\n    __slots__ = ('x', '__dict__')\n    def as_dict(self):\n        return self.__dict__\n"
+    assert _run(code, ["CH054"]) == []
+
+
+def test_ch054_ignores_class_with_a_custom_base():
+    code = "class Foo(Base):\n    __slots__ = ('x',)\n    def as_dict(self):\n        return self.__dict__\n"
+    assert _run(code, ["CH054"]) == []
+
+
+def test_ch054_ignores_hasattr_guarded_dict_access():
+    code = (
+        "class Foo:\n"
+        "    __slots__ = ()\n"
+        "    def f(self):\n"
+        "        if hasattr(self, '__dict__'):\n"
+        "            return self.__dict__.keys()\n"
+        "        return ()\n"
+    )
+    assert _run(code, ["CH054"]) == []
+
+
+# --- CH055 duplicate-with-target ------------------------------------------------------
+
+
+def test_ch055_flags_same_as_name_twice():
+    code = "def f(a, b):\n    with open(a) as fh, open(b) as fh:\n        pass\n"
+    findings = _run(code, ["CH055"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH055"
+
+
+def test_ch055_ignores_distinct_as_names():
+    code = "def f(a, b):\n    with open(a) as f1, open(b) as f2:\n        pass\n"
+    assert _run(code, ["CH055"]) == []
+
+
+def test_ch055_ignores_single_context_manager():
+    code = "def f(a):\n    with open(a) as fh:\n        pass\n"
+    assert _run(code, ["CH055"]) == []
+
+
+# --- CH056 path-absolute-literal-join ------------------------------------------------------
+
+
+def test_ch056_flags_absolute_literal_joined_onto_path():
+    code = "from pathlib import Path\np = Path('/etc/myapp') / '/passwd'\n"
+    findings = _run(code, ["CH056"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH056"
+
+
+def test_ch056_ignores_relative_literal():
+    code = "from pathlib import Path\np = Path('/etc/myapp') / 'config'\n"
+    assert _run(code, ["CH056"]) == []
+
+
+def test_ch056_ignores_non_path_division():
+    code = "x = 10 / 2\n"
+    assert _run(code, ["CH056"]) == []
+
+
+# --- CH057 reused-exhausted-iterator ------------------------------------------------------
+
+
+def test_ch057_flags_generator_consumed_twice():
+    code = "def f():\n    gen = (x for x in range(5))\n    a = list(gen)\n    b = list(gen)\n    return a, b\n"
+    findings = _run(code, ["CH057"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH057"
+
+
+def test_ch057_flags_map_consumed_twice():
+    code = "def f():\n    m = map(str, range(3))\n    a = list(m)\n    b = list(m)\n    return a, b\n"
+    assert len(_run(code, ["CH057"])) == 1
+
+
+def test_ch057_ignores_reassignment_between_consumptions():
+    code = (
+        "def f():\n"
+        "    gen = (x for x in range(5))\n"
+        "    a = list(gen)\n"
+        "    gen = (y for y in range(3))\n"
+        "    b = list(gen)\n"
+        "    return a, b\n"
+    )
+    assert _run(code, ["CH057"]) == []
+
+
+def test_ch057_ignores_single_consumption():
+    code = "def f():\n    gen = (x for x in range(5))\n    return list(gen)\n"
+    assert _run(code, ["CH057"]) == []
+
+
+# --- CH058 argparse-store-true-default ------------------------------------------------------
+
+
+def test_ch058_flags_store_true_with_true_default():
+    code = "p.add_argument('--flag', action='store_true', default=True)\n"
+    findings = _run(code, ["CH058"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH058"
+
+
+def test_ch058_flags_store_false_with_false_default():
+    code = "p.add_argument('--flag', action='store_false', default=False)\n"
+    assert len(_run(code, ["CH058"])) == 1
+
+
+def test_ch058_ignores_store_true_with_false_default():
+    code = "p.add_argument('--flag', action='store_true', default=False)\n"
+    assert _run(code, ["CH058"]) == []
+
+
+def test_ch058_ignores_store_true_with_no_default():
+    code = "p.add_argument('--flag', action='store_true')\n"
+    assert _run(code, ["CH058"]) == []
+
+
+# --- CH059 decorator-missing-return ------------------------------------------------------
+
+
+def test_ch059_flags_wrapper_never_referenced_again():
+    code = (
+        "def my_decorator(func):\n"
+        "    @functools.wraps(func)\n"
+        "    def wrapper(*args, **kwargs):\n"
+        "        return func(*args, **kwargs)\n"
+    )
+    findings = _run(code, ["CH059"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH059"
+
+
+def test_ch059_ignores_normal_return():
+    code = (
+        "def my_decorator(func):\n"
+        "    @functools.wraps(func)\n"
+        "    def wrapper(*args, **kwargs):\n"
+        "        return func(*args, **kwargs)\n"
+        "    return wrapper\n"
+    )
+    assert _run(code, ["CH059"]) == []
+
+
+def test_ch059_ignores_ternary_return_between_two_wrapped_inners():
+    code = (
+        "def trace_method(trace_id):\n"
+        "    def decorator(func):\n"
+        "        @functools.wraps(func)\n"
+        "        def wrapper(self, *args, **kwargs):\n"
+        "            return func(self, *args, **kwargs)\n"
+        "        @functools.wraps(func)\n"
+        "        async def async_wrapper(self, *args, **kwargs):\n"
+        "            return await func(self, *args, **kwargs)\n"
+        "        return async_wrapper if inspect.iscoroutinefunction(func) else wrapper\n"
+        "    return decorator\n"
+    )
+    assert _run(code, ["CH059"]) == []
+
+
+def test_ch059_ignores_reassignment_to_another_name_then_return():
+    code = (
+        "def hook(func):\n"
+        "    def decorator(f):\n"
+        "        @wraps(f)\n"
+        "        def sync_wrapper(*a, **k):\n"
+        "            return f(*a, **k)\n"
+        "        wrapper = sync_wrapper\n"
+        "        return wrapper\n"
+        "    return decorator\n"
+    )
+    assert _run(code, ["CH059"]) == []
+
+
+def test_ch059_ignores_attribute_assignment_install():
+    code = (
+        "def wrap_init(cls):\n"
+        "    @wraps(cls.__init__)\n"
+        "    def __init__(self, *args, **kwargs):\n"
+        "        pass\n"
+        "    cls.__init__ = __init__\n"
+        "    return cls\n"
+    )
+    assert _run(code, ["CH059"]) == []
+
+
+def test_ch059_ignores_sibling_wrapped_helper_called_by_another_wrapper():
+    code = (
+        "def decorator(fn):\n"
+        "    @wraps(fn)\n"
+        "    def process_request(args, kwargs):\n"
+        "        return {}\n"
+        "    @wraps(fn)\n"
+        "    def sync_wrapper(*args, **kwargs):\n"
+        "        modified = process_request(args, kwargs)\n"
+        "        return fn(*args, **kwargs)\n"
+        "    return sync_wrapper\n"
+    )
+    assert _run(code, ["CH059"]) == []
+
+
+# --- CH060 falsy-and-or-ternary ------------------------------------------------------
+
+
+def test_ch060_flags_falsy_middle_value():
+    code = "is_admin = True\nresult = is_admin and 0 or 'default'\n"
+    findings = _run(code, ["CH060"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH060"
+
+
+def test_ch060_flags_empty_string_middle_value():
+    code = "x = True\nresult = x and '' or 'fallback'\n"
+    assert len(_run(code, ["CH060"])) == 1
+
+
+def test_ch060_ignores_truthy_middle_value():
+    code = "is_admin = True\nresult = is_admin and 1 or 'default'\n"
+    assert _run(code, ["CH060"]) == []
+
+
+def test_ch060_ignores_plain_or_without_and():
+    code = "result = None or 'default'\n"
+    assert _run(code, ["CH060"]) == []
+

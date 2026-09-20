@@ -12,7 +12,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21851079.svg)](https://doi.org/10.5281/zenodo.21851079)
 
-**[Try it in your browser — no install](https://kratos0718.github.io/codehound/)** — paste Python, click Scan, see real findings from all 50 checks. Runs entirely client-side via [Pyodide](https://pyodide.org) (Python compiled to WebAssembly); your code never leaves the page.
+**[Try it in your browser — no install](https://kratos0718.github.io/codehound/)** — paste Python, click Scan, see real findings from all 60 checks. Runs entirely client-side via [Pyodide](https://pyodide.org) (Python compiled to WebAssembly); your code never leaves the page.
 
 Most linters flag style. `codehound` flags the *subtle correctness and async-safety bugs* that slip past code review and only bite in production — event-loop stalls, shared mutable state, leaked file descriptors, fire-and-forget tasks that get garbage-collected mid-run.
 
@@ -241,6 +241,16 @@ repos:
 | **CH048** | `assert-on-tuple` | `assert (x, "message")` is always true — it's a non-empty tuple, not a condition-plus-message; CPython's own compiler already emits a `SyntaxWarning` for this, easy to miss in real CI output. (pyflakes F631) | hardening rule — zero corpus hits |
 | **CH049** | `staticmethod-references-self` | A `@staticmethod` body reads `self`/`cls`, which a static method never binds to anything — crashes with `NameError` on every call. | hardening rule — zero corpus hits after two real false-positive shapes were fixed (see below) |
 | **CH050** | `static-dict-comprehension-key` | A dict comprehension's key never references its own loop variable (or a walrus bound in its own `if` clause) — every iteration overwrites the same key, so only the last item survives. (flake8-bugbear B035) | hardening rule — one plausible hit in AutoGPT, honestly ambiguous (see below) |
+| **CH051** | `mutation-during-iteration` | A dict/list/set is mutated while a loop iterates directly over it — a dict/set raises `RuntimeError` immediately, a list silently skips elements. Not from bugbear/pylint/Ruff — this project's own idea. | hardening rule — 4 real hits (mlflow, litellm, transformers ×2) after excluding same-key updates, a mutation immediately followed by `break`, and list `.append()`/`.extend()` (see below) |
+| **CH052** | `forwarded-without-unpacking` | A function's own `*args`/`**kwargs` is passed to a call that already unpacks something else with a star, but without its own matching star — silently forwarded as one extra positional value instead of being unpacked. | hardening rule — zero corpus hits after excluding `len(args)`-style lone usage (over 2,000 false positives on the first pass) and the `dict(kwargs, **more)` merge idiom (see below) |
+| **CH053** | `aliased-list-multiplication` | `[mutable_literal] * n` repeats the same object reference `n` times, not `n` independent copies — the classic `grid = [[0] * cols] * rows` 2D-init trap. Only fires when the result is later indexed and mutated cell-by-cell. | hardening rule — zero corpus hits after excluding the harmless `[[metadata]] * batch_size`-then-never-mutated idiom, which was 58 of 58 initial hits in transformers alone (see below) |
+| **CH054** | `slots-blocks-dict` | A class with `__slots__` (no `__dict__`) also reads `self.__dict__` directly or uses `@cached_property`, both of which need a per-instance `__dict__` — raises on first access, not at class definition. | hardening rule — one real hit in pydantic's own base `__repr_args__`, after excluding a `hasattr(self, '__dict__')`-guarded access and classes with a custom base (see below) |
+| **CH055** | `duplicate-with-target` | The same `as` name is bound twice in one `with` statement — the second context manager silently overwrites the name before the first is ever used. Not from bugbear/pylint/Ruff — this project's own idea. | hardening rule — zero corpus hits |
+| **CH056** | `path-absolute-literal-join` | Joining a `pathlib.Path` with a string literal that starts with `/` discards everything joined so far — `Path('/a') / '/b'` is `Path('/b')`, not `Path('/a/b')`. | hardening rule — zero corpus hits |
+| **CH057** | `reused-exhausted-iterator` | A generator/`map`/`filter`/`zip` result is consumed by two separate terminal operations (`list`, `sum`, a `for` loop, ...) — the second one gets nothing, since a one-pass iterator can't be replayed. | hardening rule — zero corpus hits |
+| **CH058** | `argparse-store-true-default` | `action='store_true'` paired with `default=True` (or `store_false`/`default=False`) makes the flag a permanent no-op — there is no way to pass it and get the other value. | hardening rule — 2 real hits (litellm, transformers) |
+| **CH059** | `decorator-missing-return` | A `@functools.wraps`-wrapped inner function is built but never mentioned again anywhere in the outer function — not returned, not assigned, not attached to anything. | hardening rule — zero corpus hits after excluding four legitimate installation shapes: a ternary between two wrapped inners, reassignment to another name before returning, direct attribute assignment, and a sibling wrapped helper called by another wrapper (see below) |
+| **CH060** | `falsy-and-or-ternary` | `(cond and a) or b` silently picks `b` when `a` is a falsy literal, even when `cond` is true — the pre-ternary `and`/`or` idiom, broken exactly the way real conditional expressions exist to fix. | hardening rule — zero corpus hits |
 
 `codehound list` prints this from the source of truth.
 
@@ -552,6 +562,14 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
       a missing `nonlocal`, unprotected `@contextmanager` cleanup, an
       always-true tupled `assert`, a `@staticmethod` reading `self`,
       a dict comprehension key that never varies — CH040-CH050
+- [x] 60 checks — mutating a dict/list/set while iterating over it,
+      forwarding `*args`/`**kwargs` without the unpacking star, the
+      `[[0] * cols] * rows` aliasing trap, `__slots__` classes that still
+      reach for `self.__dict__`, a duplicate `with ... as` target, a
+      `Path` join a literal secretly resets to absolute, replaying an
+      exhausted generator, an argparse flag `default`d to its own
+      effect, a decorator that builds its wrapper and never hands it
+      back, and the broken pre-ternary `and`/`or` idiom — CH051-CH060
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Extend CH001 to a curated denylist of sync AI/agent SDK client calls inside async functions (vector-DB clients, LLM SDKs) — the gap flake8-async's stdlib-only denylist leaves open
 

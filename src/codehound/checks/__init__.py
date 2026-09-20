@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from codehound.checks.aliased_list_multiplication import AliasedListMultiplication
+from codehound.checks.argparse_store_true_default import ArgparseStoreTrueDefault
 from codehound.checks.assert_on_tuple import AssertOnTuple
 from codehound.checks.assert_raises_too_broad import AssertRaisesTooBroad
 from codehound.checks.async_property import AsyncProperty
@@ -13,17 +15,21 @@ from codehound.checks.blocking_async import BlockingCallInAsync
 from codehound.checks.collections_abc_import import CollectionsAbcImport
 from codehound.checks.contextmanager_yield_unprotected import ContextmanagerYieldUnprotected
 from codehound.checks.datetime_utcnow import DeprecatedDatetimeUtcnow
+from codehound.checks.decorator_missing_return import DecoratorMissingReturn
 from codehound.checks.discarded_future import DiscardedFuture
 from codehound.checks.duplicate_dict_key import DuplicateDictKey
 from codehound.checks.duplicate_except_handler import DuplicateExceptHandler
 from codehound.checks.duplicate_set_value import DuplicateSetValue
+from codehound.checks.duplicate_with_target import DuplicateWithTarget
 from codehound.checks.empty_except_tuple import EmptyExceptTuple
 from codehound.checks.environ_reassignment import EnvironReassignment
+from codehound.checks.falsy_and_or_ternary import FalsyAndOrTernary
 from codehound.checks.finally_swallows_exception import FinallySwallowsException
 from codehound.checks.floating_process import FloatingProcess
 from codehound.checks.floating_task import FloatingTask
 from codehound.checks.floating_thread import FloatingThread
 from codehound.checks.floating_timer import FloatingTimer
+from codehound.checks.forwarded_without_unpacking import ForwardedWithoutUnpacking
 from codehound.checks.get_event_loop import DeprecatedGetEventLoop
 from codehound.checks.is_literal_comparison import IsLiteralComparison
 from codehound.checks.lock_constructed_inline import LockConstructedInline
@@ -32,15 +38,19 @@ from codehound.checks.lru_cache_on_async_function import LruCacheOnAsyncFunction
 from codehound.checks.lru_cache_on_method import LruCacheOnMethod
 from codehound.checks.mutable_class_attribute import MutableClassAttribute
 from codehound.checks.mutable_defaults import MutableDefaultArgument
+from codehound.checks.mutation_during_iteration import MutationDuringIteration
 from codehound.checks.nan_equality import NanEqualityComparison
 from codehound.checks.nondeterministic_default import NondeterministicDefault
+from codehound.checks.path_absolute_literal_join import PathAbsoluteLiteralJoin
 from codehound.checks.pointless_comparison import PointlessComparisonStatement
 from codehound.checks.raise_literal import RaiseLiteral
+from codehound.checks.reused_exhausted_iterator import ReusedExhaustedIterator
 from codehound.checks.removed_asyncio_task_methods import RemovedAsyncioTaskMethods
 from codehound.checks.removed_getargspec import RemovedGetargspec
 from codehound.checks.removed_stdlib_attribute import RemovedStdlibAttribute
 from codehound.checks.removed_stdlib_module import RemovedStdlibModule
 from codehound.checks.resource_leak import UnclosedFileHandle
+from codehound.checks.slots_blocks_dict import SlotsBlocksDict
 from codehound.checks.static_dict_comprehension_key import StaticDictComprehensionKey
 from codehound.checks.staticmethod_references_self import StaticmethodReferencesSelf
 from codehound.checks.strip_multichar import StripMultichar
@@ -105,6 +115,16 @@ ALL_CHECKS: list[type[Check]] = [
     AssertOnTuple,
     StaticmethodReferencesSelf,
     StaticDictComprehensionKey,
+    MutationDuringIteration,
+    ForwardedWithoutUnpacking,
+    AliasedListMultiplication,
+    SlotsBlocksDict,
+    DuplicateWithTarget,
+    PathAbsoluteLiteralJoin,
+    ReusedExhaustedIterator,
+    ArgparseStoreTrueDefault,
+    DecoratorMissingReturn,
+    FalsyAndOrTernary,
 ]
 
 

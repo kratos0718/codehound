@@ -89,7 +89,17 @@ src/codehound/
 │   ├── contextmanager_yield_unprotected.py CH047
 │   ├── assert_on_tuple.py      CH048
 │   ├── staticmethod_references_self.py CH049
-│   └── static_dict_comprehension_key.py CH050
+│   ├── static_dict_comprehension_key.py CH050
+│   ├── mutation_during_iteration.py CH051
+│   ├── forwarded_without_unpacking.py CH052
+│   ├── aliased_list_multiplication.py CH053
+│   ├── slots_blocks_dict.py    CH054
+│   ├── duplicate_with_target.py CH055
+│   ├── path_absolute_literal_join.py CH056
+│   ├── reused_exhausted_iterator.py CH057
+│   ├── argparse_store_true_default.py CH058
+│   ├── decorator_missing_return.py CH059
+│   └── falsy_and_or_ternary.py CH060
 └── __init__.py      # public API surface + __version__
 ```
 
@@ -238,7 +248,7 @@ HuggingFace's `transformers` produced byte-identical output at `workers=1`
 and at the default worker count, while cutting wall-clock time from 57
 seconds to 12.
 
-## The fifty checks
+## The sixty checks
 
 | Code | Detects | Key structural test |
 |------|---------|--------------------|
@@ -292,6 +302,16 @@ seconds to 12.
 | CH048 | `assert` on a non-empty tuple literal | `Assert.test` is a `Tuple` with at least one element |
 | CH049 | `@staticmethod` body reads `self`/`cls` | a `Name`/`Load` reference to `self`/`cls` whose nearest enclosing function is the `@staticmethod` itself, not a parameter, and has no local `Store`-context binding anywhere in that function's own scope (skipping nested scopes) |
 | CH050 | dict comprehension key never varies per iteration | `DictComp.key` has no reference to any `for`-target name or walrus target bound in a generator's `iter`/`ifs`, and contains no `Call` itself |
+| CH051 | mutating the exact dict/list/set a loop iterates over | `For`/`AsyncFor` whose `iter` is a bare `Name` or a `.keys()`/`.values()`/`.items()` call on one, with a `del`/`Store`-subscript/mutating-method call on that same name in the loop body; excludes a `Store`-subscript keyed by the loop's own current key (by name or by a literal already proven equal via an enclosing `if key == 'literal':`), a mutation immediately followed by an unconditional `break` in the same block, and `.append()`/`.extend()` |
+| CH052 | a function's own `*args`/`**kwargs` forwarded to a call without its star | a bare `Name` argument in a `Call` matching the enclosing function's `vararg`/`kwarg` param name, only when that same call already has another `Starred` arg or a `**`-keyword; excludes `dict(...)`/`.update(...)` calls |
+| CH053 | `[mutable_literal] * n` aliasing, later mutated | RHS of a top-level `Assign` to a `Name` is a `BinOp(Mult)` where one side is a single-element `List` whose element is itself a `List`/`Dict`/`Set` (or another `[x] * n` `BinOp`), and a later statement in the same block does a nested `Subscript`-`Store` on that name (`name[i][j] = ...`) |
+| CH054 | `__slots__` class relying on a per-instance `__dict__` | `ClassDef` with no base (or only `object`) and a literal `__slots__` not containing `"__dict__"`, that either reads `self.__dict__` (unless guarded by an enclosing `if hasattr(self, '__dict__'):`) or decorates a method with `@cached_property` |
+| CH055 | duplicate `as` target in one `with` | two `withitem.optional_vars` in the same `With`/`AsyncWith` are `Name` nodes with the same `id` |
+| CH056 | `Path(...) / '/literal'` resets to absolute | `BinOp(Div)` whose left side is (or chains back to) a `Path`/`PurePath`/`PosixPath`/`PurePosixPath` call, and whose right side is a string `Constant` starting with `/` |
+| CH057 | replaying an exhausted generator/`map`/`filter`/`zip` | a `Name` bound from a `GeneratorExp`/`map`/`filter`/`zip` call is passed as the first arg to two different terminal calls (`list`/`tuple`/`set`/`sorted`/`sum`/`max`/`min`) or used as two separate `for`-loop iterables in the same function, with no reassignment in between |
+| CH058 | `argparse` flag `default`d to its own effect | `add_argument(...)` call with `action='store_true'`/`default=True` or `action='store_false'`/`default=False` |
+| CH059 | `@wraps`-decorated inner function never referenced again | a top-level nested `FunctionDef`/`AsyncFunctionDef` decorated with `functools.wraps(...)`/`wraps(...)` whose name doesn't appear as a `Name` anywhere else in the outer function (including inside sibling `@wraps`-decorated helpers) |
+| CH060 | `(cond and a) or b` with a falsy literal `a` | `BoolOp(Or)` whose first value is a `BoolOp(And)` ending in a literal that's falsy (`literal_value` is falsy, or an empty `List`/`Dict`/`Set`/`Tuple`) |
 
 Each lives in its own file with a module docstring explaining the bug and a
 real-world example of where it was found.

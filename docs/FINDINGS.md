@@ -1,14 +1,15 @@
 # Findings in the wild
 
-Eight of the fifty `codehound` rules were distilled from a bug
+Eight of the sixty `codehound` rules were distilled from a bug
 found in a real, widely-used open-source project, with the fix submitted
-as a pull request. The rest (CH007-CH009, CH012-CH050) are hardening
-rules verified through real false positives against a ~29-framework
-validation corpus instead of a found-and-merged bug - see "Notes on
-precision" below for why, and what that absence itself says. CH026,
-CH029, CH034, CH036, CH038, CH045, CH046, and CH047 are partial
-exceptions: each found real, previously-unreported bugs on their
-first scan, but not all of them have a PR yet - see "Real bugs found,
+as a pull request. The rest (CH007-CH009, CH012-CH050, CH052-CH057,
+CH059-CH060) are hardening rules verified through real false positives
+against a ~29-framework validation corpus instead of a found-and-merged
+bug - see "Notes on precision" below for why, and what that absence
+itself says. CH026, CH029, CH034, CH036, CH038, CH045, CH046, CH047,
+CH051, and CH058 are partial exceptions: each found real,
+previously-unreported bugs on their first (or, for CH051/CH058, a later
+narrowed) scan, but not all of them have a PR yet - see "Real bugs found,
 not yet filed" below.
 
 Three more checks were built, corpus-scanned, and **rejected outright**
@@ -577,6 +578,99 @@ round - not shipped, not narrowed, deleted:**
   `self.processes` and joining every one - confirmed by reading that
   method, not assumed. Fixed by porting the exact same "passed as an
   argument to any call" check into all three.
+- **CH051, three real false-positive shapes fixed across three passes, all
+  found by reading actual corpus hits.** The first pass flagged
+  transformers' `configuration_utils.py::to_dict` - `for key, value in
+  output.items(): ... output[key] = value` - re-assigning a key the loop
+  is *already on* can never change the dict's size, so it can never
+  trigger the `RuntimeError` this check exists to catch; verified
+  directly. Fixed by tracking the loop's own current-key binding and
+  skipping a `Store`-subscript keyed by exactly that name - which then
+  surfaced a second, narrower shape in pydantic's `json_schema.py`:
+  `if key == '$ref': schema['$ref'] = ...`, re-assigning the *same*
+  key but spelled as the literal an enclosing `if` already proved it
+  equals, not as the bound name directly - fixed by tracking literals an
+  enclosing `if`/`elif` test proves equal to the loop's key, scoped to
+  that branch's own body only. The second pass flagged transformers'
+  mamba `load_hook` - `for k in state_dict: if "embedding." in k: ...;
+  break` - verified directly that Python's dict iterator only raises on
+  its *next* `__next__()` call, so a mutation immediately followed by an
+  unconditional `break` never gets the chance; fixed by checking whether
+  the very next statement in the same block is a `Break`. The third pass
+  flagged langgraph's own subgraph-search loop -
+  `for c in candidates: ... candidates.extend(c.steps)` - a deliberate,
+  verified-safe growing-worklist pattern: appending to the *end* of a
+  list mid-iteration doesn't raise and the loop correctly sees the new
+  items, unlike a set's `.add()`, which still raises immediately (both
+  verified directly) - fixed by dropping `append`/`extend` from the
+  mutating-methods list entirely, keeping `insert`/`remove`/`pop` and the
+  set-only methods.
+- **CH052, the single largest false-positive count this project has ever
+  had on a first pass - over 2,000 hits - fixed by requiring a second
+  signal, then narrowed once more for a real idiom.** The original design
+  flagged any bare `args`/`kwargs` name matching the enclosing function's
+  own variadic parameters, passed anywhere as a plain positional argument.
+  Reading real hits found the overwhelming majority were `len(args)`,
+  `bool(kwargs)`, and similar - completely ordinary uses of the collection
+  *itself* as a value, not a dropped star; `len`/`bool`/etc. don't accept
+  `*args`, so there was never a star to drop. Fixed by only firing when
+  the *same call* already correctly unpacks something else with a star -
+  a call mixing real unpacking with a bare name of the same kind is a far
+  stronger signal that a `*`/`**` fell out partway through writing it.
+  That cut the count to 2, one of which was letta's own decorator helper:
+  `dict(_kwargs, **kwargs)` - `dict()`'s constructor (and `.update()`) is
+  explicitly designed to accept a mapping as its first positional
+  argument, the one case where mixing a bare name with real unpacking in
+  the same call is completely correct. Fixed by excluding `dict(...)`/
+  `.update(...)` calls specifically.
+- **CH053, a 58-hit false-positive cluster in transformers, all the same
+  copy-pasted idiom, cut to zero by requiring proof of later mutation.**
+  The first pass flagged `processed_grids[shape] = [[grid_t, grid_h,
+  grid_w]] * batch_size`, repeated near-identically across dozens of
+  model image processors (glm4v, qwen2_vl, lfm2_vl, and more) - a
+  broadcast per-batch-item metadata literal that feeds straight into a
+  dict or a tensor constructor and is never indexed into a second time.
+  The aliasing is real but inert: nothing ever asks two of the "rows" to
+  be independent. Fixed by only firing when the assigned name is *later*
+  subscripted with a nested store (`name[i][j] = ...`) in the same block -
+  the shape that actually exercises the aliasing - which also surfaced a
+  detection gap in the check's own canonical example: `[[0] * cols] *
+  rows` wasn't matched at all, since the inner element is a `BinOp`
+  (`[0] * cols`), not a bare list literal; fixed by recognizing a
+  list-repetition `BinOp` as "mutable" too.
+- **CH054, a real false positive found in pydantic's own base
+  `__repr_args__`, the textbook-correct way to handle it.**
+  `Representation.__slots__ = ()`, and `__repr_args__` does `if not
+  attrs_names and hasattr(self, '__dict__'): attrs_names =
+  self.__dict__.keys()` - a `hasattr` guard immediately before the
+  access, correctly handling subclasses that may or may not add
+  `__dict__` back via their own, different `__slots__` (verified
+  directly: a subclass without `__slots__` at all does get a real
+  `__dict__`, despite the base declaring `__slots__ = ()`). Fixed by
+  walking up from a found `self.__dict__` access to check whether it
+  sits inside an `if hasattr(self, '__dict__'):`-guarded (optionally
+  `and`-chained) block.
+- **CH059, one very broad detection redesign after four different
+  legitimate installation shapes were found, each on its own corpus
+  pass.** The original design only recognized `return wrapper` verbatim.
+  llama_index's own tracing decorator returns
+  `async_wrapper if inspect.iscoroutinefunction(func) else wrapper` - a
+  ternary choosing between two `@wraps`-decorated inners. agno's `hook`
+  decorator assigns `wrapper = async_wrapper if ... else sync_wrapper`
+  then `return wrapper` - the wrapped name reassigned to a different one
+  before being returned. transformers' `wrap_init_to_accept_kwargs`
+  does `cls.__init__ = __init__` - installed via attribute assignment,
+  never `return`ed at all. dspy's own cache decorator has a
+  `process_request` helper, *also* decorated with `@wraps(fn)`, called
+  only from inside `sync_wrapper`/`async_wrapper` - never returned itself,
+  but not orphaned either. Rather than keep enumerating installation
+  shapes one at a time, redesigned around a strictly weaker, more
+  defensible bar: is the wrapped name referenced *anywhere else at all*
+  in the outer function, by any mechanism - a return, a reassignment, an
+  attribute target, or a sibling helper's call? Only a name built with
+  `@wraps` and never mentioned again anywhere still gets flagged. That one
+  redesign resolved all four shapes at once and cut the corpus count from
+  51 to 0.
 
 These are why the test suite asserts *both* directions: bad code flagged, good code
 left alone.
@@ -872,6 +966,39 @@ Two more real bugs found the same way, in different checks:
   thread and a CLI process instead of a task and an event loop. Lower
   stakes (a missed analytics ping, not a lost trace in a running
   service) and not traced further this round.
+- **CH051 (`mutation-during-iteration`), 4 real hits surviving three
+  precision passes.** mlflow's `default.py` (also present, byte-identical,
+  in a stray copy vendored under `accelerate/mlflow/`) does `for
+  extra_metric in extra_metrics: ... extra_metrics.remove(extra_metric)` -
+  a plain `list.remove()` inside the loop iterating that same list, so the
+  element right after a removed latency metric can be silently skipped.
+  litellm's `common_utils.py` does the JSON-schema equivalent:
+  `for atype in anyof: ... anyof.remove(atype)`. transformers'
+  `convert_suno_to_hf.py` does `for k in state_dict: ...
+  state_dict[new_k] = state_dict.pop(k)` with no `break` after it (unlike
+  a byte-identical-looking pattern in `modeling_mamba.py` that *does*
+  `break` right after and was correctly excluded - see below) - the very
+  next iteration's `__next__()` call raises `RuntimeError: dictionary
+  changed size during iteration`. transformers' own `utils/check_inits.py`
+  does `for folder in directories: ... directories.remove(folder)` while
+  filtering `os.walk`'s own `dirnames` list - `os.walk`'s documented
+  contract for pruning traversal is fine with `dirnames` being mutated in
+  place, but doing it via `.remove()` from inside a `for` loop over that
+  same list still skips checking whatever folder slides into the removed
+  one's position, independent of `os.walk`'s own semantics. None filed
+  yet - found in the same pass that built and precision-tuned the check
+  itself (see "Notes on precision" below).
+- **CH058 (`argparse-store-true-default`), 2 real hits.** litellm's
+  `scripts/benchmark_chat_completions_perf.py` has
+  `add_argument("--measure-full-stream", action="store_true",
+  default=True, help="... (on by default).")` - the help text even
+  documents the intended default, but `store_true` already returns that
+  default when the flag is absent, so the flag itself does nothing;
+  there's no way to pass it and get `False`. transformers'
+  `convert_blt_weights_to_hf.py` has the identical shape for `--debug`.
+  Neither filed yet - both are one-line, unambiguous fixes (drop the
+  redundant `default=True`/`default=False`), found in the same pass as
+  CH051 above.
 
 ## Bugs the tool found on its own
 
