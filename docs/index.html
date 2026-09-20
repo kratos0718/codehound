@@ -14,6 +14,7 @@
     --bg: #08090b;
     --panel: #101215;
     --panel-2: #16181c;
+    --panel-3: #1b1e22;
     --border: #24272c;
     --border-soft: #1b1e22;
     --text: #eceef1;
@@ -23,9 +24,12 @@
     --accent-soft: rgba(242,183,5,0.14);
     --accent-text: #1a1400;
     --green: #4ade80;
+    --green-soft: rgba(74,222,128,0.12);
     --red: #f87171;
+    --blue: #6ea8fe;
     --mono: 'JetBrains Mono', ui-monospace, monospace;
     --sans: 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif;
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
   }
   * { box-sizing: border-box; }
   html { scroll-behavior: smooth; }
@@ -35,17 +39,29 @@
     color: var(--text);
     font-family: var(--sans);
     -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
   }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
   code { font-family: var(--mono); }
+
+  /* ---------- scroll-reveal ---------- */
+  .reveal {
+    opacity: 0;
+    transform: translateY(22px);
+    transition: opacity 0.7s var(--ease), transform 0.7s var(--ease);
+  }
+  .reveal.in { opacity: 1; transform: translateY(0); }
+  @media (prefers-reduced-motion: reduce) {
+    .reveal { opacity: 1; transform: none; transition: none; }
+  }
 
   /* ---------- top nav ---------- */
   nav {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 18px 28px;
+    padding: 20px 28px;
     max-width: 1180px;
     margin: 0 auto;
     flex-wrap: wrap;
@@ -54,15 +70,26 @@
   .brand { display: flex; align-items: center; gap: 10px; }
   .brand img { width: 30px; height: 30px; border-radius: 7px; }
   .brand span { font-family: var(--mono); font-weight: 700; font-size: 16px; letter-spacing: -0.01em; }
-  .nav-links { display: flex; gap: 22px; font-size: 14px; }
+  .nav-links { display: flex; align-items: center; gap: 26px; font-size: 14px; }
   .nav-links a { color: var(--text-dim); }
   .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .nav-cta {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text) !important;
+    padding: 7px 14px;
+    border-radius: 7px;
+    font-size: 13px;
+    font-weight: 600;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .nav-cta:hover { border-color: var(--accent); background: var(--panel-3); text-decoration: none !important; }
 
   /* ---------- hero ---------- */
   .hero {
-    max-width: 900px;
+    max-width: 880px;
     margin: 0 auto;
-    padding: 52px 28px 40px;
+    padding: 64px 28px 44px;
     text-align: center;
   }
   .eyebrow {
@@ -74,7 +101,7 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 20px;
+    margin-bottom: 22px;
   }
   .eyebrow .dot {
     width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
@@ -88,23 +115,23 @@
   }
   h1 {
     font-family: var(--mono);
-    font-size: clamp(30px, 5vw, 48px);
+    font-size: clamp(32px, 5.4vw, 52px);
     font-weight: 700;
-    line-height: 1.15;
+    line-height: 1.12;
     letter-spacing: -0.02em;
-    margin: 0 0 18px;
+    margin: 0 0 20px;
     text-wrap: balance;
   }
   h1 .hl { color: var(--accent); }
-  .hero p {
-    font-size: 17px;
-    line-height: 1.6;
+  .hero p.lede {
+    font-size: 18px;
+    line-height: 1.65;
     color: var(--text-dim);
-    max-width: 640px;
-    margin: 0 auto 30px;
+    max-width: 620px;
+    margin: 0 auto 34px;
     text-wrap: balance;
   }
-  .hero p code { color: var(--text); background: var(--panel-2); padding: 2px 6px; border-radius: 5px; font-size: 14.5px; }
+  .hero p.lede code { color: var(--text); background: var(--panel-2); padding: 2px 6px; border-radius: 5px; font-size: 15px; }
 
   .stats {
     display: grid;
@@ -112,21 +139,34 @@
     gap: 1px;
     background: var(--border);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 14px;
     overflow: hidden;
     max-width: 720px;
     margin: 0 auto;
   }
-  .stat { background: var(--panel); padding: 16px 10px; text-align: center; }
-  .stat .num { font-family: var(--mono); font-size: 22px; font-weight: 700; color: var(--text); }
+  .stat { background: var(--panel); padding: 18px 10px; text-align: center; }
+  .stat .num { font-family: var(--mono); font-size: 24px; font-weight: 700; color: var(--text); }
   .stat .label { font-size: 11.5px; color: var(--text-dim); margin-top: 4px; letter-spacing: 0.01em; }
   @media (max-width: 640px) {
     .stats { grid-template-columns: repeat(2, 1fr); }
   }
 
+  .hero-ctas { display: flex; gap: 12px; justify-content: center; margin-top: 30px; flex-wrap: wrap; }
+  .btn-ghost {
+    border: 1px solid var(--border);
+    color: var(--text) !important;
+    background: var(--panel);
+    padding: 11px 20px;
+    border-radius: 9px;
+    font-weight: 600;
+    font-size: 14px;
+    transition: border-color 0.15s, background 0.15s, transform 0.15s;
+  }
+  .btn-ghost:hover { border-color: var(--accent); background: var(--panel-2); text-decoration: none !important; transform: translateY(-1px); }
+
   .privacy-banner {
     max-width: 1180px;
-    margin: 32px auto 0;
+    margin: 36px auto 0;
     padding: 12px 28px;
     display: flex;
     align-items: center;
@@ -138,12 +178,114 @@
   }
   .privacy-banner strong { color: var(--text); font-weight: 600; }
 
-  /* ---------- tool ---------- */
-  main {
+  /* ---------- section shell ---------- */
+  .section {
     max-width: 1180px;
     margin: 0 auto;
-    padding: 20px 28px 60px;
+    padding: 76px 28px;
   }
+  .section-head { max-width: 660px; margin: 0 auto 44px; text-align: center; }
+  .section-tag {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 12px;
+    display: block;
+  }
+  .section-head h2 {
+    font-size: clamp(24px, 3.4vw, 34px);
+    line-height: 1.2;
+    margin: 0 0 12px;
+    text-wrap: balance;
+    letter-spacing: -0.01em;
+  }
+  .section-head p {
+    color: var(--text-dim);
+    font-size: 15.5px;
+    line-height: 1.6;
+    margin: 0;
+    text-wrap: balance;
+  }
+  hr.divider { border: none; border-top: 1px solid var(--border); max-width: 1180px; margin: 0 auto; }
+
+  /* ---------- proof / real bugs section ---------- */
+  .proof-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  @media (max-width: 980px) { .proof-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 640px) { .proof-grid { grid-template-columns: 1fr; } }
+
+  .proof-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px 22px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: border-color 0.2s var(--ease), transform 0.2s var(--ease);
+  }
+  .proof-card:hover { border-color: #35393f; transform: translateY(-2px); }
+  .proof-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .proof-repo { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-weight: 700; font-size: 14px; }
+  .proof-repo img { width: 20px; height: 20px; border-radius: 5px; }
+  .proof-stars { font-size: 12px; color: var(--text-faint); font-family: var(--mono); }
+  .proof-status {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 5px;
+    white-space: nowrap;
+  }
+  .proof-status.merged { background: var(--green-soft); color: var(--green); }
+  .proof-status.open { background: var(--accent-soft); color: var(--accent); }
+  .proof-rule {
+    display: inline-block;
+    width: fit-content;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--blue);
+    background: rgba(110,168,254,0.12);
+    padding: 2px 8px;
+    border-radius: 5px;
+  }
+  .proof-what { font-size: 13.5px; line-height: 1.55; color: var(--text-dim); flex: 1; }
+  .proof-what b { color: var(--text); font-weight: 600; }
+  .proof-link { font-size: 12.5px; font-family: var(--mono); margin-top: auto; }
+
+  .proof-more { text-align: center; margin-top: 32px; }
+
+  /* ---------- transparency callout ---------- */
+  .callout {
+    background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 30px 32px;
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .callout-icon { font-size: 30px; line-height: 1; }
+  .callout-body { flex: 1; min-width: 240px; }
+  .callout-body h3 { margin: 0 0 6px; font-size: 17px; }
+  .callout-body p { margin: 0; color: var(--text-dim); font-size: 14px; line-height: 1.6; }
+  .callout-stats { display: flex; gap: 28px; }
+  .callout-stat { text-align: center; }
+  .callout-stat .num { font-family: var(--mono); font-weight: 700; font-size: 22px; color: var(--red); }
+  .callout-stat .num.ok { color: var(--green); }
+  .callout-stat .label { font-size: 11px; color: var(--text-faint); margin-top: 2px; }
+
+  /* ---------- tool ---------- */
+  main { max-width: 1180px; margin: 0 auto; padding: 0 28px 70px; }
+  main .section-head { margin-bottom: 28px; }
 
   .tabs {
     display: flex;
@@ -153,7 +295,7 @@
     border-radius: 10px;
     padding: 4px;
     width: fit-content;
-    margin-bottom: 16px;
+    margin: 0 auto 16px;
   }
   .tab {
     background: transparent;
@@ -177,6 +319,7 @@
     gap: 8px;
     flex-wrap: wrap;
     margin-bottom: 14px;
+    justify-content: center;
   }
   .examples button {
     background: var(--panel-2);
@@ -294,9 +437,10 @@
     font-weight: 700;
     font-size: 14px;
     cursor: pointer;
-    transition: filter 0.15s;
+    transition: filter 0.15s, transform 0.1s;
   }
   button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+  button.primary:active:not(:disabled) { transform: scale(0.98); }
   button.primary:disabled { background: var(--border); color: var(--text-faint); cursor: wait; }
   #status { font-size: 13px; color: var(--text-dim); }
   #status.ready::before { content: "● "; color: var(--green); }
@@ -322,7 +466,7 @@
   .finding {
     display: flex;
     gap: 10px;
-    padding: 10px 16px;
+    padding: 11px 16px;
     border-bottom: 1px solid var(--border-soft);
     font-size: 13.5px;
   }
@@ -334,6 +478,8 @@
     font-size: 12.5px;
     padding-top: 2px;
   }
+  .finding .body { flex: 1; min-width: 0; }
+  .finding .code-row { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
   .finding .code {
     display: inline-block;
     background: var(--accent-soft);
@@ -344,8 +490,10 @@
     font-size: 11.5px;
     font-weight: 700;
     white-space: nowrap;
+    cursor: help;
   }
-  .finding .msg { color: var(--text); line-height: 1.5; }
+  .finding .rule-name { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+  .finding .msg { color: var(--text); line-height: 1.5; display: block; margin-top: 3px; }
 
   .empty-state {
     display: flex;
@@ -370,26 +518,45 @@
   }
   .install-log .ok { color: var(--green); }
 
-  .how { max-width: 1180px; margin: 0 auto; padding: 10px 28px 40px; }
-  .how h2 { font-family: var(--mono); font-size: 15px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; margin-bottom: 18px; }
-  .how-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-  @media (max-width: 800px) { .how-grid { grid-template-columns: 1fr; } }
-  .how-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
+  /* ---------- how it works ---------- */
+  .how-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  @media (max-width: 980px) { .how-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 600px) { .how-grid { grid-template-columns: 1fr; } }
+  .how-card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 22px 20px; transition: border-color 0.2s; }
+  .how-card:hover { border-color: #35393f; }
   .how-card .n { font-family: var(--mono); color: var(--accent); font-size: 13px; font-weight: 700; }
-  .how-card h3 { margin: 8px 0 6px; font-size: 15px; }
-  .how-card p { margin: 0; font-size: 13.5px; color: var(--text-dim); line-height: 1.55; }
+  .how-card h3 { margin: 10px 0 8px; font-size: 15.5px; }
+  .how-card p { margin: 0; font-size: 13.5px; color: var(--text-dim); line-height: 1.6; }
+  .how-card.rejects { border-color: rgba(248,113,113,0.25); }
+  .how-card.rejects .n { color: var(--red); }
 
   footer {
+    border-top: 1px solid var(--border);
+  }
+  .footer-inner {
     max-width: 1180px;
     margin: 0 auto;
-    padding: 24px 28px 44px;
-    color: var(--text-faint);
-    font-size: 13px;
-    text-align: center;
-    border-top: 1px solid var(--border);
-    margin-top: 10px;
+    padding: 40px 28px 44px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 24px;
+    flex-wrap: wrap;
   }
-  footer a { color: var(--text-dim); text-decoration: underline; text-underline-offset: 2px; }
+  .footer-brand { display: flex; align-items: center; gap: 10px; }
+  .footer-brand img { width: 26px; height: 26px; border-radius: 6px; }
+  .footer-brand span { font-family: var(--mono); font-weight: 700; font-size: 14.5px; }
+  .footer-cols { display: flex; gap: 56px; flex-wrap: wrap; }
+  .footer-col h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); margin: 0 0 10px; font-weight: 600; }
+  .footer-col a { display: block; color: var(--text-dim); font-size: 13.5px; margin-bottom: 8px; }
+  .footer-col a:hover { color: var(--text); text-decoration: none; }
+  .footer-bottom {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 28px 32px;
+    color: var(--text-faint);
+    font-size: 12.5px;
+  }
 </style>
 </head>
 <body>
@@ -400,25 +567,130 @@
     <span>codehound</span>
   </div>
   <div class="nav-links">
-    <a href="https://github.com/kratos0718/codehound" target="_blank" rel="noopener">GitHub</a>
-    <a href="https://pypi.org/project/codehound/" target="_blank" rel="noopener">PyPI</a>
-    <a href="https://github.com/kratos0718/codehound/blob/main/docs/FINDINGS.md" target="_blank" rel="noopener">Findings</a>
+    <a href="#proof">Real bugs</a>
+    <a href="#try">Try it</a>
+    <a href="#how">How it works</a>
+    <a href="https://github.com/kratos0718/codehound" target="_blank" rel="noopener" class="nav-cta">GitHub</a>
   </div>
 </nav>
 
 <section class="hero">
   <div class="eyebrow"><span class="dot"></span> AST-based static analysis, in your browser</div>
   <h1>The bugs your reviewers <span class="hl">didn't</span> catch.</h1>
-  <p>codehound hunts subtle correctness and async-safety bugs — the ones that pass code review and only bite in production. Scan a snippet, a whole GitHub repo, or a local folder below. Nothing is uploaded: it all runs on your machine, in <code>codehound</code>'s own Python, compiled to WebAssembly.</p>
-  <div class="stats">
+  <p class="lede">codehound hunts subtle correctness and async-safety bugs — the ones that pass code review and only bite in production. Every rule below was distilled from a real bug, found and fixed in a real open-source project. Scan a snippet, a whole GitHub repo, or a local folder further down. Nothing is uploaded: it runs on your machine, in <code>codehound</code>'s own Python, compiled to WebAssembly.</p>
+  <div class="stats reveal">
     <div class="stat"><div class="num">50</div><div class="label">checks</div></div>
     <div class="stat"><div class="num">8</div><div class="label">merged / open PRs</div></div>
     <div class="stat"><div class="num">~29</div><div class="label">frameworks validated on</div></div>
     <div class="stat"><div class="num">0</div><div class="label">runtime dependencies</div></div>
   </div>
+  <div class="hero-ctas">
+    <a href="#try" class="btn-ghost">Try it now →</a>
+    <a href="#proof" class="btn-ghost">See the real bugs</a>
+  </div>
 </section>
 
-<main>
+<hr class="divider">
+
+<section class="section" id="proof">
+  <div class="section-head reveal">
+    <span class="section-tag">Real bugs, real merges</span>
+    <h2>Every rule exists because of a bug like this</h2>
+    <p>codehound isn't a demo — these are real defects it found in widely-used open-source projects, each fixed with a regression test verified to fail before the fix and pass after it.</p>
+  </div>
+
+  <div class="proof-grid">
+    <div class="proof-card reveal">
+      <div class="proof-top">
+        <div class="proof-repo"><img src="https://github.com/agno-agi.png" alt=""> agno <span class="proof-stars">41k★</span></div>
+        <span class="proof-status merged">Merged</span>
+      </div>
+      <span class="proof-rule">CH001 · blocking-call-in-async</span>
+      <p class="proof-what">The project's original proof point. codehound pointed at agno's own source found <b>requests.get()</b> sitting inside the async Discord <code>on_message</code> handler — freezing the event loop on every attachment, and able to 403 on authenticated URLs. Not a bug anyone was looking for; the scan found it.</p>
+      <a class="proof-link" href="https://github.com/agno-agi/agno/pull/8186" target="_blank" rel="noopener">agno-agi/agno #8186 →</a>
+    </div>
+
+    <div class="proof-card reveal">
+      <div class="proof-top">
+        <div class="proof-repo"><img src="https://github.com/huggingface.png" alt=""> accelerate <span class="proof-stars">9k★</span></div>
+        <span class="proof-status open">PR open</span>
+      </div>
+      <span class="proof-rule">CH010 · loop-closure-capture</span>
+      <p class="proof-what">In distributed-training parameter sync, a list of callbacks — one per model chunk — each captured <b>model_index by reference</b>. Whichever chunk's callback fired last reported the <i>same, wrong</i> index for every chunk. Used across the PyTorch training ecosystem.</p>
+      <a class="proof-link" href="https://github.com/huggingface/accelerate/pull/4273" target="_blank" rel="noopener">huggingface/accelerate #4273 →</a>
+    </div>
+
+    <div class="proof-card reveal">
+      <div class="proof-top">
+        <div class="proof-repo"><img src="https://github.com/optuna.png" alt=""> optuna <span class="proof-stars">12k★</span></div>
+        <span class="proof-status open">PR open</span>
+      </div>
+      <span class="proof-rule">CH011 · lru-cache-on-method</span>
+      <p class="proof-what">Seven node-lookup methods on <b>_FanovaTree</b> were <code>@lru_cache</code>'d directly on the class. Every tree built for a single <code>get_param_importances()</code> call — one per random-forest estimator — stayed reachable through the cache forever, instead of being freed the moment it was done.</p>
+      <a class="proof-link" href="https://github.com/optuna/optuna/pull/6859" target="_blank" rel="noopener">optuna/optuna #6859 →</a>
+    </div>
+
+    <div class="proof-card reveal">
+      <div class="proof-top">
+        <div class="proof-repo"><img src="https://github.com/run-llama.png" alt=""> llama_index <span class="proof-stars">40k★</span></div>
+        <span class="proof-status open">PR open</span>
+      </div>
+      <span class="proof-rule">CH011 · lru-cache-on-method</span>
+      <p class="proof-what">Same class-level cache mistake, with a compounding twist: <b>VectaraIndex._get_corpus_key</b>'s leak meant the class's own <code>__del__</code> — written specifically to close its HTTP session — never ran. One bug quietly broke a second, unrelated cleanup path nobody had connected to it.</p>
+      <a class="proof-link" href="https://github.com/run-llama/llama_index/pull/23089" target="_blank" rel="noopener">run-llama/llama_index #23089 →</a>
+    </div>
+
+    <div class="proof-card reveal">
+      <div class="proof-top">
+        <div class="proof-repo"><img src="https://github.com/berriai.png" alt=""> litellm <span class="proof-stars">30k★</span></div>
+        <span class="proof-status open">PR open</span>
+      </div>
+      <span class="proof-rule">CH011 · lru-cache-on-method</span>
+      <p class="proof-what"><b>Router._cached_get_model_group_info</b> leaked every Router that ever served a request — and survived even a correctly-called <code>Router.discard()</code>, the class's own documented cleanup method. Proved it independently by testing all four combinations before trusting the fix.</p>
+      <a class="proof-link" href="https://github.com/BerriAI/litellm/pull/41582" target="_blank" rel="noopener">BerriAI/litellm #41582 →</a>
+    </div>
+
+    <div class="proof-card reveal">
+      <div class="proof-top">
+        <div class="proof-repo"><img src="https://github.com/agno-agi.png" alt=""> agno <span class="proof-stars">41k★</span></div>
+        <span class="proof-status open">PR open</span>
+      </div>
+      <span class="proof-rule">CH006 · floating-task</span>
+      <p class="proof-what">A fire-and-forget <code>asyncio.create_task()</code> in the tracing exporter's async path — the event loop only holds a <i>weak</i> reference to a task, so with nothing else referencing it, traces could be silently dropped mid-run.</p>
+      <a class="proof-link" href="https://github.com/agno-agi/agno/pull/8183" target="_blank" rel="noopener">agno-agi/agno #8183 →</a>
+    </div>
+  </div>
+
+  <div class="proof-more reveal">
+    <a href="https://github.com/kratos0718/codehound/blob/main/docs/FINDINGS.md" target="_blank" rel="noopener" class="btn-ghost">Read the full findings log →</a>
+  </div>
+</section>
+
+<hr class="divider">
+
+<section class="section">
+  <div class="callout reveal">
+    <div class="callout-icon">🔍</div>
+    <div class="callout-body">
+      <h3>Every rejected idea is public too</h3>
+      <p>Most tools only show you what shipped. Three fully-built checks were corpus-scanned and thrown out this year because the real hits turned out to be correct code, not bugs — the same discipline applied to codehound's own rules that its rules apply to yours.</p>
+    </div>
+    <div class="callout-stats">
+      <div class="callout-stat"><div class="num">3</div><div class="label">checks rejected</div></div>
+      <div class="callout-stat"><div class="num ok">50</div><div class="label">checks shipped</div></div>
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
+<main id="try">
+  <div class="section-head reveal" style="margin-top: 70px;">
+    <span class="section-tag">Try it yourself</span>
+    <h2>Scan a snippet, a repo, or your own code</h2>
+    <p>The exact same 50 checks as the CLI, running in a real CPython build compiled to WebAssembly. Nothing you paste or point it at leaves your machine.</p>
+  </div>
+
   <div class="tabs" id="tabs">
     <button class="tab active" data-mode="snippet">Snippet</button>
     <button class="tab" data-mode="repo">GitHub repo</button>
@@ -435,7 +707,7 @@
   </div>
 
   <div class="mode-panel" id="mode-repo">
-    <div class="hint" style="margin-bottom: 12px; font-size: 12.5px; color: var(--text-faint);">
+    <div class="hint" style="margin-bottom: 12px; font-size: 12.5px; color: var(--text-faint); text-align: center;">
       Fetches the repo's Python files over the network (via the GitHub API + raw.githubusercontent.com), then scans them locally. Nothing is sent to any server codehound controls.
     </div>
   </div>
@@ -470,31 +742,63 @@
   </div>
 </main>
 
-<section class="how">
-  <h2>How this actually works</h2>
+<hr class="divider">
+
+<section class="section" id="how">
+  <div class="section-head reveal">
+    <span class="section-tag">Under the hood</span>
+    <h2>How this actually works</h2>
+  </div>
   <div class="how-grid">
-    <div class="how-card">
+    <div class="how-card reveal">
       <div class="n">01</div>
       <h3>Python, compiled to WebAssembly</h3>
       <p><a href="https://pyodide.org" target="_blank" rel="noopener">Pyodide</a> runs a full CPython build in your browser tab. On load, it installs the real, currently-published <code>codehound</code> wheel straight from PyPI with <code>micropip</code> — the exact same package <code>pip install codehound</code> gives you.</p>
     </div>
-    <div class="how-card">
+    <div class="how-card reveal">
       <div class="n">02</div>
       <h3>Your code stays local</h3>
       <p>A snippet is scanned in memory. A GitHub repo is fetched file-by-file from GitHub's own CDN straight into the browser tab. A local folder never leaves your machine at all — there's no server behind this page to send it to.</p>
     </div>
-    <div class="how-card">
+    <div class="how-card reveal">
       <div class="n">03</div>
       <h3>The same 50 checks as the CLI</h3>
       <p>This isn't a demo subset — it's <code>codehound.get_checks()</code> and <code>scan_files()</code>, the identical code path <code>codehound scan</code> runs locally. What you see here is what you'd get from the real tool.</p>
+    </div>
+    <div class="how-card rejects reveal">
+      <div class="n">04</div>
+      <h3>Every finding is a lead, not a verdict</h3>
+      <p>A finding means the shape looks dangerous, not that it definitely is. Read the message, check the context — some flagged code is genuinely fine, and the findings log above documents real examples of exactly that, checked and cleared.</p>
     </div>
   </div>
 </section>
 
 <footer>
-  Built by <a href="https://github.com/kratos0718" target="_blank" rel="noopener">kratos0718</a> —
-  <a href="https://github.com/kratos0718/codehound" target="_blank" rel="noopener">codehound</a> is MIT-licensed and has zero runtime dependencies.
-  Install it locally with <code>pip install codehound</code>.
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <img src="assets/logo.png" alt="codehound logo">
+      <span>codehound</span>
+    </div>
+    <div class="footer-cols">
+      <div class="footer-col">
+        <h4>Project</h4>
+        <a href="https://github.com/kratos0718/codehound" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://pypi.org/project/codehound/" target="_blank" rel="noopener">PyPI</a>
+        <a href="https://github.com/kratos0718/codehound/blob/main/docs/FINDINGS.md" target="_blank" rel="noopener">Findings log</a>
+        <a href="https://github.com/kratos0718/codehound/blob/main/docs/ARCHITECTURE.md" target="_blank" rel="noopener">Architecture</a>
+      </div>
+      <div class="footer-col">
+        <h4>Author</h4>
+        <a href="https://github.com/kratos0718" target="_blank" rel="noopener">kratos0718</a>
+        <a href="https://www.abhinavbuilds.online/" target="_blank" rel="noopener">Portfolio</a>
+      </div>
+      <div class="footer-col">
+        <h4>Install</h4>
+        <a href="#" onclick="navigator.clipboard.writeText('pip install codehound'); this.textContent='Copied ✓'; return false;"><code>pip install codehound</code></a>
+      </div>
+    </div>
+  </div>
+  <div class="footer-bottom">codehound is MIT-licensed and has zero runtime dependencies.</div>
 </footer>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
@@ -551,6 +855,7 @@ let pyodide;
 let scanPathsFn;
 let scanSourceFn;
 let currentMode = 'snippet';
+let checkMeta = {};
 
 function setStatus(text, kind) {
   const el = document.getElementById('status');
@@ -564,6 +869,28 @@ function escapeHtml(s) {
 
 function isSkippedPath(path) {
   return path.split('/').some((part) => SKIP_DIR_PARTS.has(part));
+}
+
+/* ---------------- scroll reveal ---------------- */
+
+function initReveal() {
+  const items = document.querySelectorAll('.reveal');
+  if (!('IntersectionObserver' in window)) {
+    items.forEach((el) => el.classList.add('in'));
+    return;
+  }
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('in');
+        io.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+  items.forEach((el, i) => {
+    el.style.transitionDelay = `${Math.min(i % 6, 5) * 60}ms`;
+    io.observe(el);
+  });
 }
 
 /* ---------------- tabs / mode switching ---------------- */
@@ -668,6 +995,20 @@ function renderProgress(message) {
     `<div class="empty-state"><span class="big">${escapeHtml(message)}</span></div>`;
 }
 
+function findingHtml(f) {
+  const meta = checkMeta[f.code];
+  const title = meta ? escapeHtml(`${meta.name} — ${meta.description}`) : '';
+  const ruleName = meta ? `<span class="rule-name">${escapeHtml(meta.name)}</span>` : '';
+  return `
+    <div class="finding">
+      <span class="loc">${f.line}:${f.col}</span>
+      <div class="body">
+        <div class="code-row"><span class="code" title="${title}">${f.code}</span>${ruleName}</div>
+        <span class="msg">${escapeHtml(f.message)}</span>
+      </div>
+    </div>`;
+}
+
 function renderFindings(findings, meta) {
   const results = document.getElementById('results');
   const label = document.getElementById('resultsLabel');
@@ -687,13 +1028,7 @@ function renderFindings(findings, meta) {
 
   const byFile = meta && meta.grouped;
   if (!byFile) {
-    results.innerHTML = summaryHtml + findings
-      .map((f) => `
-        <div class="finding">
-          <span class="loc">${f.line}:${f.col}</span>
-          <div><span class="code">${f.code}</span> <span class="msg">${escapeHtml(f.message)}</span></div>
-        </div>`)
-      .join('');
+    results.innerHTML = summaryHtml + findings.map(findingHtml).join('');
     return;
   }
 
@@ -705,13 +1040,7 @@ function renderFindings(findings, meta) {
   let html = summaryHtml;
   for (const [path, items] of groups) {
     html += `<div class="file-group"><div class="file-head">${escapeHtml(path)}</div>`;
-    html += items
-      .map((f) => `
-        <div class="finding">
-          <span class="loc">${f.line}:${f.col}</span>
-          <div><span class="code">${f.code}</span> <span class="msg">${escapeHtml(f.message)}</span></div>
-        </div>`)
-      .join('');
+    html += items.map(findingHtml).join('');
     html += '</div>';
   }
   results.innerHTML = html;
@@ -839,6 +1168,7 @@ document.getElementById('scanBtn').addEventListener('click', () => {
 
 async function boot() {
   renderInputPanelFor('snippet');
+  initReveal();
 
   const log = document.getElementById('installLog');
   try {
@@ -885,10 +1215,15 @@ def _scan_paths(virtual_paths_json, display_paths_json):
         })
     out.sort(key=lambda f: (f["path"], f["line"], f["col"], f["code"]))
     return json.dumps({"findings": out})
+
+def _check_meta():
+    return json.dumps({c.code: {"name": c.name, "description": c.description} for c in get_checks()})
 `);
 
     scanSourceFn = pyodide.globals.get('_scan_source');
     scanPathsFn = pyodide.globals.get('_scan_paths');
+    const checkMetaFn = pyodide.globals.get('_check_meta');
+    checkMeta = JSON.parse(checkMetaFn());
 
     setStatus('Ready — codehound v' + pyodide.runPython('codehound.__version__'), 'ready');
     document.getElementById('scanBtn').disabled = false;
