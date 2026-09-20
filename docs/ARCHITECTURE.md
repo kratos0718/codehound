@@ -99,7 +99,17 @@ src/codehound/
 │   ├── reused_exhausted_iterator.py CH057
 │   ├── argparse_store_true_default.py CH058
 │   ├── decorator_missing_return.py CH059
-│   └── falsy_and_or_ternary.py CH060
+│   ├── falsy_and_or_ternary.py CH060
+│   ├── regex_backspace_escape.py CH061
+│   ├── total_ordering_missing_eq.py CH062
+│   ├── unbounded_cycle_consumption.py CH063
+│   ├── asyncio_wait_bare_coroutine.py CH064
+│   ├── dict_fromkeys_mutable_default.py CH065
+│   ├── os_path_join_absolute_literal.py CH066
+│   ├── namedtuple_mutable_default.py CH067
+│   ├── logging_extra_reserved_key.py CH068
+│   ├── contextvar_mutable_default.py CH069
+│   └── threading_local_mutable_class_attr.py CH070
 └── __init__.py      # public API surface + __version__
 ```
 
@@ -248,7 +258,7 @@ HuggingFace's `transformers` produced byte-identical output at `workers=1`
 and at the default worker count, while cutting wall-clock time from 57
 seconds to 12.
 
-## The sixty checks
+## The seventy checks
 
 | Code | Detects | Key structural test |
 |------|---------|--------------------|
@@ -312,6 +322,16 @@ seconds to 12.
 | CH058 | `argparse` flag `default`d to its own effect | `add_argument(...)` call with `action='store_true'`/`default=True` or `action='store_false'`/`default=False` |
 | CH059 | `@wraps`-decorated inner function never referenced again | a top-level nested `FunctionDef`/`AsyncFunctionDef` decorated with `functools.wraps(...)`/`wraps(...)` whose name doesn't appear as a `Name` anywhere else in the outer function (including inside sibling `@wraps`-decorated helpers) |
 | CH060 | `(cond and a) or b` with a falsy literal `a` | `BoolOp(Or)` whose first value is a `BoolOp(And)` ending in a literal that's falsy (`literal_value` is falsy, or an empty `List`/`Dict`/`Set`/`Tuple`) |
+| CH061 | regex pattern string with a literal backspace byte | first positional arg to `re.<func>(...)` (receiver must be the bare name `re`) is a `Constant` string containing `\x08` |
+| CH062 | `@total_ordering` class with no `__eq__` | `ClassDef` decorated with `functools.total_ordering`/`total_ordering`, no base other than `object`, and no `__eq__` in its own body |
+| CH063 | `itertools.cycle(...)` piped into a full consumer | `Call` to `list`/`tuple`/`set`/`frozenset`/`sorted`/`sum`/`max`/`min` whose first arg is itself a `Call` to `cycle`/`itertools.cycle` |
+| CH064 | bare coroutine inside `asyncio.wait([...])` | `asyncio.wait(...)`'s first arg is a `List`/`Tuple`/`Set` literal containing a `Call` element not itself wrapped in `create_task`/`ensure_future` |
+| CH065 | `dict.fromkeys(keys, mutable_value)` | `Call` to `dict.fromkeys` whose second positional arg is a `List`/`Dict`/`Set` literal or a no-arg `list`/`dict`/`set` call |
+| CH066 | `os.path.join(base, '/literal', ...)` | `Call` to `os.path.join`/`path.join` where any argument after the first is a string `Constant` starting with `/` |
+| CH067 | `NamedTuple` field with a mutable literal default | `ClassDef` with a `NamedTuple` base, containing an `AnnAssign` whose default value is a `List`/`Dict`/`Set` literal or a no-arg `list`/`dict`/`set` call |
+| CH068 | logging `extra={}` key colliding with a `LogRecord` attribute | a call to a logging method's `extra=` keyword is a `Dict` literal with a string key matching a curated set of real `LogRecord.__dict__` attribute names (verified directly against the actual attribute list) |
+| CH069 | `ContextVar` mutable default mutated in place | `ContextVar(..., default=mutable_literal)` assigned to a `Name`, where that same name's `.get()` result is later mutated directly (`.get().append(...)`, `.get()[k] = v`) anywhere else in the module |
+| CH070 | `threading.local` subclass, class-level mutable attribute | `ClassDef` with a `threading.local` base, containing a plain `Assign` to a mutable literal at the class level |
 
 Each lives in its own file with a module docstring explaining the bug and a
 real-world example of where it was found.

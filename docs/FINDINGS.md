@@ -1,16 +1,16 @@
 # Findings in the wild
 
-Eight of the sixty `codehound` rules were distilled from a bug
+Eight of the seventy `codehound` rules were distilled from a bug
 found in a real, widely-used open-source project, with the fix submitted
 as a pull request. The rest (CH007-CH009, CH012-CH050, CH052-CH057,
-CH059-CH060) are hardening rules verified through real false positives
-against a ~29-framework validation corpus instead of a found-and-merged
-bug - see "Notes on precision" below for why, and what that absence
-itself says. CH026, CH029, CH034, CH036, CH038, CH045, CH046, CH047,
-CH051, and CH058 are partial exceptions: each found real,
-previously-unreported bugs on their first (or, for CH051/CH058, a later
-narrowed) scan, but not all of them have a PR yet - see "Real bugs found,
-not yet filed" below.
+CH059-CH066, CH069-CH070) are hardening rules verified through real false
+positives against a ~29-framework validation corpus instead of a
+found-and-merged bug - see "Notes on precision" below for why, and what
+that absence itself says. CH026, CH029, CH034, CH036, CH038, CH045,
+CH046, CH047, CH051, CH058, CH067, and CH068 are partial exceptions: each
+found real, previously-unreported bugs on their first (or, for
+CH051/CH058/CH069, a later narrowed) scan, but not all of them have a PR
+yet - see "Real bugs found, not yet filed" below.
 
 Three more checks were built, corpus-scanned, and **rejected outright**
 this same round, joining the same discipline that turned down
@@ -671,6 +671,23 @@ round - not shipped, not narrowed, deleted:**
   `@wraps` and never mentioned again anywhere still gets flagged. That one
   redesign resolved all four shapes at once and cut the corpus count from
   51 to 0.
+- **CH069, all 7 first-pass hits turned out to be the correct, defensive
+  pattern - independently, in four unrelated projects.** The original
+  design flagged any `ContextVar(..., default=mutable_literal)`. Reading
+  every real hit found the same idiom every time: letta's `log_context.py`
+  and llama_index's `callbacks/base.py` both do `current =
+  var.get().copy(); current[...] = ...; var.set(current)`; qdrant-client's
+  `context_headers.py` does `merged = {**current, **extra_headers};
+  var.set(merged)`; pydantic-ai's `function_signature.py` only ever reads
+  via `var.get().get(name, name)`, a read-only dict lookup, never a
+  mutation. None of the four ever mutate the shared default in place -
+  they copy or spread first, then `.set()` the result back, which is
+  exactly the safe pattern this check exists to tell apart from the
+  broken one. Fixed by requiring proof of an actual in-place mutation on
+  the un-copied `.get()` result (`var.get().append(...)`, `var.get()[k] =
+  v`) anywhere else in the same module before flagging - cut the corpus
+  count from 7 to 0, while the check still catches the genuinely unsafe
+  shape directly (verified with a synthetic repro before and after).
 
 These are why the test suite asserts *both* directions: bad code flagged, good code
 left alone.
@@ -999,6 +1016,33 @@ Two more real bugs found the same way, in different checks:
   Neither filed yet - both are one-line, unambiguous fixes (drop the
   redundant `default=True`/`default=False`), found in the same pass as
   CH051 above.
+- **CH067 (`namedtuple-mutable-default`), one real hit in optuna.**
+  `visualization/_contour.py`'s `_SubContourInfo(NamedTuple)` has
+  `constraints: list[bool] = []` - verified directly that `NamedTuple`
+  field defaults are evaluated once at class-definition time and shared,
+  the same mechanism as an ordinary function's default argument, not
+  copied per instance the way a `pydantic.BaseModel` field default is
+  (documented as a real, checked false positive for CH002 earlier in this
+  file). Not filed yet - a one-line `default_factory`-style fix
+  (`NamedTuple` doesn't have `default_factory`, so the real fix is
+  restructuring to a `@dataclass` or accepting the shared default is safe
+  here because nothing mutates `constraints` in place) needs a closer
+  read of how `_SubContourInfo` instances are actually constructed first.
+- **CH068 (`logging-extra-reserved-key`), one real hit in litellm, at
+  `WARNING` level - the one severity most deployments don't filter out
+  by default.** `guardrail_hooks/lasso/lasso.py`'s malformed-tool-call
+  handler does `verbose_proxy_logger.warning("Skipping malformed
+  tool_call", extra={"call_id": call_id, "name": name})` - `"name"` is a
+  real `LogRecord` attribute, so this raises `KeyError: "Attempt to
+  overwrite 'name' in LogRecord"` the moment a malformed tool call
+  actually reaches this line, turning a diagnostic warning about bad
+  input into an unhandled exception instead. Unlike this project's own
+  earlier verification example (an `INFO`-level call, filtered out by
+  the common `WARNING`-level default and therefore invisible until
+  someone raises verbosity), `WARNING` is usually *not* filtered, so
+  this one is live in ordinary operation, not just under debug settings.
+  Not filed yet - straightforward one-line fix (rename the key), found
+  in the same pass the check itself was built and corpus-scanned in.
 
 ## Bugs the tool found on its own
 

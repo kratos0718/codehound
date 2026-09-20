@@ -3035,3 +3035,265 @@ def test_ch060_ignores_plain_or_without_and():
     code = "result = None or 'default'\n"
     assert _run(code, ["CH060"]) == []
 
+
+# --- CH061 regex-backspace-escape ------------------------------------------------------
+
+
+def test_ch061_flags_backspace_from_unraw_string():
+    code = 'import re\nre.search("' + "\bword" + '", text)\n'
+    findings = _run(code, ["CH061"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH061"
+
+
+def test_ch061_ignores_raw_string():
+    code = "import re\nre.search(r'\\bword\\b', text)\n"
+    assert _run(code, ["CH061"]) == []
+
+
+def test_ch061_ignores_unrelated_builtin_compile():
+    code = "compile('x=1', '<s>', 'exec')\n"
+    assert _run(code, ["CH061"]) == []
+
+
+def test_ch061_ignores_dotted_method_on_other_object():
+    code = "obj.search(x)\n"
+    assert _run(code, ["CH061"]) == []
+
+
+# --- CH062 total-ordering-missing-eq ------------------------------------------------------
+
+
+def test_ch062_flags_class_with_no_eq():
+    code = (
+        "import functools\n"
+        "@functools.total_ordering\n"
+        "class Money:\n"
+        "    def __lt__(self, other):\n"
+        "        return self.amount < other.amount\n"
+    )
+    findings = _run(code, ["CH062"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH062"
+
+
+def test_ch062_ignores_class_with_eq():
+    code = (
+        "import functools\n"
+        "@functools.total_ordering\n"
+        "class Money:\n"
+        "    def __eq__(self, other):\n"
+        "        return self.amount == other.amount\n"
+        "    def __lt__(self, other):\n"
+        "        return self.amount < other.amount\n"
+    )
+    assert _run(code, ["CH062"]) == []
+
+
+def test_ch062_ignores_class_with_custom_base():
+    code = (
+        "import functools\n"
+        "@functools.total_ordering\n"
+        "class Money(Base):\n"
+        "    def __lt__(self, other):\n"
+        "        return self.amount < other.amount\n"
+    )
+    assert _run(code, ["CH062"]) == []
+
+
+def test_ch062_ignores_undecorated_class():
+    code = "class Money:\n    def __lt__(self, other):\n        return True\n"
+    assert _run(code, ["CH062"]) == []
+
+
+# --- CH063 unbounded-cycle-consumption ------------------------------------------------------
+
+
+def test_ch063_flags_list_of_cycle():
+    code = "import itertools\nlist(itertools.cycle([1, 2, 3]))\n"
+    findings = _run(code, ["CH063"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH063"
+
+
+def test_ch063_flags_sum_of_cycle():
+    code = "from itertools import cycle\nsum(cycle([1, 2, 3]))\n"
+    assert len(_run(code, ["CH063"])) == 1
+
+
+def test_ch063_ignores_islice_of_cycle():
+    code = "import itertools\nlist(itertools.islice(itertools.cycle([1, 2, 3]), 10))\n"
+    assert _run(code, ["CH063"]) == []
+
+
+def test_ch063_ignores_list_of_plain_iterable():
+    code = "list([1, 2, 3])\n"
+    assert _run(code, ["CH063"]) == []
+
+
+# --- CH064 asyncio-wait-bare-coroutine ------------------------------------------------------
+
+
+def test_ch064_flags_bare_coroutine_in_wait_list():
+    code = "import asyncio\nasync def f():\n    await asyncio.wait([g()])\n"
+    findings = _run(code, ["CH064"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH064"
+
+
+def test_ch064_ignores_create_task_wrapped():
+    code = "import asyncio\nasync def f():\n    await asyncio.wait([asyncio.create_task(g())])\n"
+    assert _run(code, ["CH064"]) == []
+
+
+def test_ch064_ignores_bare_name_reference():
+    code = "import asyncio\nasync def f(tasks):\n    await asyncio.wait(tasks)\n"
+    assert _run(code, ["CH064"]) == []
+
+
+# --- CH065 dict-fromkeys-mutable-default ------------------------------------------------------
+
+
+def test_ch065_flags_fromkeys_with_list_default():
+    code = "d = dict.fromkeys(['a', 'b'], [])\n"
+    findings = _run(code, ["CH065"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH065"
+
+
+def test_ch065_ignores_fromkeys_with_immutable_default():
+    code = "d = dict.fromkeys(['a', 'b'], None)\n"
+    assert _run(code, ["CH065"]) == []
+
+
+def test_ch065_ignores_fromkeys_with_no_default():
+    code = "d = dict.fromkeys(['a', 'b'])\n"
+    assert _run(code, ["CH065"]) == []
+
+
+# --- CH066 os-path-join-absolute-literal ------------------------------------------------------
+
+
+def test_ch066_flags_absolute_literal_argument():
+    code = "import os.path\nos.path.join('/etc/myapp', '/passwd')\n"
+    findings = _run(code, ["CH066"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH066"
+
+
+def test_ch066_ignores_relative_literal_argument():
+    code = "import os.path\nos.path.join('/etc/myapp', 'config')\n"
+    assert _run(code, ["CH066"]) == []
+
+
+def test_ch066_ignores_unrelated_join_call():
+    code = "','.join(['a', '/b'])\n"
+    assert _run(code, ["CH066"]) == []
+
+
+# --- CH067 namedtuple-mutable-default ------------------------------------------------------
+
+
+def test_ch067_flags_list_default_field():
+    code = "from typing import NamedTuple\nclass Config(NamedTuple):\n    tags: list = []\n"
+    findings = _run(code, ["CH067"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH067"
+
+
+def test_ch067_ignores_immutable_default_field():
+    code = "from typing import NamedTuple\nclass Config(NamedTuple):\n    name: str = ''\n"
+    assert _run(code, ["CH067"]) == []
+
+
+def test_ch067_ignores_non_namedtuple_class():
+    code = "class Config:\n    tags: list = []\n"
+    assert _run(code, ["CH067"]) == []
+
+
+# --- CH068 logging-extra-reserved-key ------------------------------------------------------
+
+
+def test_ch068_flags_reserved_key_name():
+    code = "import logging\nlogging.getLogger(__name__).warning('x', extra={'name': 'oops'})\n"
+    findings = _run(code, ["CH068"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH068"
+
+
+def test_ch068_flags_reserved_key_message():
+    code = "logger.info('x', extra={'message': 'oops'})\n"
+    assert len(_run(code, ["CH068"])) == 1
+
+
+def test_ch068_ignores_non_reserved_key():
+    code = "logger.info('x', extra={'request_id': '123'})\n"
+    assert _run(code, ["CH068"]) == []
+
+
+def test_ch068_ignores_call_without_extra():
+    code = "logger.info('x')\n"
+    assert _run(code, ["CH068"]) == []
+
+
+# --- CH069 contextvar-mutable-default ------------------------------------------------------
+
+
+def test_ch069_flags_direct_mutation_on_get():
+    code = (
+        "from contextvars import ContextVar\n"
+        "items_var = ContextVar('items', default=[])\n"
+        "def add(x):\n"
+        "    items_var.get().append(x)\n"
+    )
+    findings = _run(code, ["CH069"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH069"
+
+
+def test_ch069_ignores_copy_then_set():
+    code = (
+        "from contextvars import ContextVar\n"
+        "items_var = ContextVar('items', default=[])\n"
+        "def add(x):\n"
+        "    current = items_var.get().copy()\n"
+        "    current.append(x)\n"
+        "    items_var.set(current)\n"
+    )
+    assert _run(code, ["CH069"]) == []
+
+
+def test_ch069_ignores_read_only_usage():
+    code = (
+        "from contextvars import ContextVar\n"
+        "headers_var = ContextVar('headers', default={})\n"
+        "def get_header(k):\n"
+        "    return headers_var.get().get(k)\n"
+    )
+    assert _run(code, ["CH069"]) == []
+
+
+def test_ch069_ignores_immutable_default():
+    code = "from contextvars import ContextVar\nvar = ContextVar('x', default=None)\n"
+    assert _run(code, ["CH069"]) == []
+
+
+# --- CH070 threading-local-mutable-class-attr ------------------------------------------------------
+
+
+def test_ch070_flags_mutable_class_attr_on_threading_local():
+    code = "import threading\nclass MyLocal(threading.local):\n    items = []\n"
+    findings = _run(code, ["CH070"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH070"
+
+
+def test_ch070_ignores_mutable_class_attr_on_plain_class():
+    code = "class Foo:\n    items = []\n"
+    assert _run(code, ["CH070"]) == []
+
+
+def test_ch070_ignores_immutable_class_attr_on_threading_local():
+    code = "import threading\nclass MyLocal(threading.local):\n    name = 'default'\n"
+    assert _run(code, ["CH070"]) == []
+

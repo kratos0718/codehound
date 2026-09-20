@@ -12,7 +12,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21851079.svg)](https://doi.org/10.5281/zenodo.21851079)
 
-**[Try it in your browser — no install](https://kratos0718.github.io/codehound/)** — paste Python, click Scan, see real findings from all 60 checks. Runs entirely client-side via [Pyodide](https://pyodide.org) (Python compiled to WebAssembly); your code never leaves the page.
+**[Try it in your browser — no install](https://kratos0718.github.io/codehound/)** — paste Python, click Scan, see real findings from all 70 checks. Runs entirely client-side via [Pyodide](https://pyodide.org) (Python compiled to WebAssembly); your code never leaves the page.
 
 Most linters flag style. `codehound` flags the *subtle correctness and async-safety bugs* that slip past code review and only bite in production — event-loop stalls, shared mutable state, leaked file descriptors, fire-and-forget tasks that get garbage-collected mid-run.
 
@@ -251,6 +251,16 @@ repos:
 | **CH058** | `argparse-store-true-default` | `action='store_true'` paired with `default=True` (or `store_false`/`default=False`) makes the flag a permanent no-op — there is no way to pass it and get the other value. | hardening rule — 2 real hits (litellm, transformers) |
 | **CH059** | `decorator-missing-return` | A `@functools.wraps`-wrapped inner function is built but never mentioned again anywhere in the outer function — not returned, not assigned, not attached to anything. | hardening rule — zero corpus hits after excluding four legitimate installation shapes: a ternary between two wrapped inners, reassignment to another name before returning, direct attribute assignment, and a sibling wrapped helper called by another wrapper (see below) |
 | **CH060** | `falsy-and-or-ternary` | `(cond and a) or b` silently picks `b` when `a` is a falsy literal, even when `cond` is true — the pre-ternary `and`/`or` idiom, broken exactly the way real conditional expressions exist to fix. | hardening rule — zero corpus hits |
+| **CH061** | `regex-backspace-escape` | A regex pattern string contains a literal backspace byte — almost always `\b` written without an `r''` prefix, so Python turned it into a backspace character before the regex engine ever saw it, silently breaking the word-boundary match. Not from bugbear/pylint/Ruff, and not caught by flake8's own invalid-escape warning either, since `\b` **is** a valid Python escape. | hardening rule — zero corpus hits |
+| **CH062** | `total-ordering-missing-eq` | A class decorated with `@functools.total_ordering` defines no `__eq__` of its own — it silently falls back to identity-based equality, so two instances with equal data compare unequal, and every comparison method derived from that inherits the wrong answer. | hardening rule — zero corpus hits |
+| **CH063** | `unbounded-cycle-consumption` | `itertools.cycle(...)` passed directly to `list`/`sum`/`sorted`/etc. — `cycle` is infinite by definition, so anything that tries to consume it in full hangs forever instead of raising. | hardening rule — zero corpus hits |
+| **CH064** | `asyncio-wait-bare-coroutine` | A bare coroutine call inside `asyncio.wait([...])` instead of a Task — deprecated since 3.8, a hard `TypeError` on 3.11+; verified directly against Python 3.13. | hardening rule — zero corpus hits |
+| **CH065** | `dict-fromkeys-mutable-default` | `dict.fromkeys(keys, mutable_value)` assigns the *same* object to every key, not a copy per key — the same root cause as a mutable default argument (CH002), one call away. | hardening rule — zero corpus hits |
+| **CH066** | `os-path-join-absolute-literal` | `os.path.join(base, '/literal', ...)` restarts from the absolute-looking literal, discarding `base` and everything before it — the `os.path` sibling of CH056's `pathlib.Path` version. | hardening rule — zero corpus hits |
+| **CH067** | `namedtuple-mutable-default` | A `typing.NamedTuple` field with a mutable literal default is shared by every instance that doesn't override it — `NamedTuple` defaults work like an ordinary function's, unlike a `pydantic.BaseModel` field default, which this project's own findings log documents as correctly copied per instance. | hardening rule — real hit in optuna |
+| **CH068** | `logging-extra-reserved-key` | A logging call's `extra={}` dict uses a key that's already a `LogRecord` attribute (`name`, `message`, `module`, ...) — raises `KeyError` the moment that specific call actually fires, which is easy to leave unexercised if the logger's level normally filters it out. | hardening rule — real hit in litellm |
+| **CH069** | `contextvar-mutable-default` | A `contextvars.ContextVar`'s mutable default is mutated directly on `.get()` elsewhere in the file — every context that never calls `.set(...)` first shares that same object, defeating the point of a context variable. Only fires with proof of an actual in-place mutation; the first corpus scan's real hits (letta, llama_index, qdrant-client, pydantic-ai) all turned out to already use the correct copy-then-`.set()` pattern (see below). | hardening rule — zero corpus hits after narrowing |
+| **CH070** | `threading-local-mutable-class-attr` | A `threading.local` subclass's class-level mutable attribute is looked up on the class itself, the same for every thread — silently defeating the one thing `threading.local` exists to guarantee. | hardening rule — zero corpus hits |
 
 `codehound list` prints this from the source of truth.
 
@@ -570,6 +580,17 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
       exhausted generator, an argparse flag `default`d to its own
       effect, a decorator that builds its wrapper and never hands it
       back, and the broken pre-ternary `and`/`or` idiom — CH051-CH060
+- [x] 70 checks — a regex pattern with a literal backspace byte instead of
+      a raw `\b`, `@total_ordering` missing the `__eq__` it needs to
+      derive correct comparisons, piping an infinite `itertools.cycle`
+      into something that tries to consume it in full, a bare coroutine
+      inside `asyncio.wait([...])`, `dict.fromkeys` aliasing one value
+      across every key, `os.path.join`'s absolute-literal reset, a
+      `NamedTuple` field with a mutable default, a logging `extra={}`
+      key that collides with a `LogRecord` attribute, a `ContextVar`
+      mutated in place on `.get()`, and a `threading.local` subclass
+      leaking a class-level mutable attribute across every thread —
+      CH061-CH070
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Extend CH001 to a curated denylist of sync AI/agent SDK client calls inside async functions (vector-DB clients, LLM SDKs) — the gap flake8-async's stdlib-only denylist leaves open
 
