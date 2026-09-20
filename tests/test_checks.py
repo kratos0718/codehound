@@ -3782,3 +3782,282 @@ def test_ch088_ignores_explicit_count_int():
     code = "import re\ndef f(text):\n    return re.sub('a', 'b', text, 2)\n"
     assert _run(code, ["CH088"]) == []
 
+
+# --- CH089 bytes-str-join-mismatch --------------------------------------------------------------
+
+
+def test_ch089_flags_str_join_on_bytes_list():
+    code = "def f():\n    return ', '.join([b'a', b'b'])\n"
+    findings = _run(code, ["CH089"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH089"
+
+
+def test_ch089_flags_bytes_join_on_str_list():
+    code = "def f():\n    return b', '.join(['a', 'b'])\n"
+    findings = _run(code, ["CH089"])
+    assert len(findings) == 1
+
+
+def test_ch089_ignores_matching_types():
+    code = "def f():\n    return ', '.join(['a', 'b'])\n"
+    assert _run(code, ["CH089"]) == []
+
+
+# --- CH090 exit-returns-true-unconditionally ----------------------------------------------------
+
+
+def test_ch090_flags_exit_always_returns_true():
+    code = (
+        "class CM:\n"
+        "    def __enter__(self):\n        return self\n"
+        "    def __exit__(self, exc_type, exc_val, exc_tb):\n"
+        "        print('cleanup')\n        return True\n"
+    )
+    findings = _run(code, ["CH090"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH090"
+
+
+def test_ch090_ignores_conditional_suppression():
+    code = (
+        "class CM:\n"
+        "    def __exit__(self, exc_type, exc_val, exc_tb):\n"
+        "        if exc_type is ValueError:\n            return True\n"
+        "        return False\n"
+    )
+    assert _run(code, ["CH090"]) == []
+
+
+def test_ch090_ignores_returns_false():
+    code = "class CM:\n    def __exit__(self, exc_type, exc_val, exc_tb):\n        return False\n"
+    assert _run(code, ["CH090"]) == []
+
+
+# --- CH091 hash-eq-field-mismatch -----------------------------------------------------------------
+
+
+def test_ch091_flags_hash_using_field_not_in_eq():
+    code = (
+        "class Bad:\n"
+        "    def __init__(self, a, b):\n        self.a = a\n        self.b = b\n"
+        "    def __eq__(self, other):\n        return self.a == other.a\n"
+        "    def __hash__(self):\n        return hash((self.a, self.b))\n"
+    )
+    findings = _run(code, ["CH091"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH091"
+
+
+def test_ch091_ignores_matching_fields():
+    code = (
+        "class Good:\n"
+        "    def __init__(self, a, b):\n        self.a = a\n        self.b = b\n"
+        "    def __eq__(self, other):\n        return self.a == other.a and self.b == other.b\n"
+        "    def __hash__(self):\n        return hash((self.a, self.b))\n"
+    )
+    assert _run(code, ["CH091"]) == []
+
+
+def test_ch091_ignores_tuple_comparison_shape():
+    code = (
+        "class Good:\n"
+        "    def __init__(self, a, b):\n        self.a = a\n        self.b = b\n"
+        "    def __eq__(self, other):\n        return (self.a, self.b) == (other.a, other.b)\n"
+        "    def __hash__(self):\n        return hash((self.a, self.b))\n"
+    )
+    assert _run(code, ["CH091"]) == []
+
+
+def test_ch091_ignores_hash_using_a_method_call():
+    code = (
+        "class Good:\n"
+        "    def __eq__(self, other):\n        return self.a == other.a\n"
+        "    def __hash__(self):\n        return hash(self.to_json())\n"
+    )
+    assert _run(code, ["CH091"]) == []
+
+
+def test_ch091_ignores_dict_equality():
+    code = (
+        "class Good:\n"
+        "    def __eq__(self, other):\n        return self.__dict__ == other.__dict__\n"
+        "    def __hash__(self):\n        return hash((self.a, self.b))\n"
+    )
+    assert _run(code, ["CH091"]) == []
+
+
+# --- CH092 path-write-type-mismatch ---------------------------------------------------------------
+
+
+def test_ch092_flags_write_text_with_bytes():
+    code = "def f(p):\n    return p.write_text(b'hello')\n"
+    findings = _run(code, ["CH092"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH092"
+
+
+def test_ch092_flags_write_bytes_with_str():
+    code = "def f(p):\n    return p.write_bytes('hello')\n"
+    findings = _run(code, ["CH092"])
+    assert len(findings) == 1
+
+
+def test_ch092_ignores_correct_types():
+    code = "def f(p):\n    p.write_text('hello')\n    p.write_bytes(b'hello')\n"
+    assert _run(code, ["CH092"]) == []
+
+
+# --- CH093 asyncio-to-thread-async-function ---------------------------------------------------------
+
+
+def test_ch093_flags_to_thread_on_async_function():
+    code = "import asyncio\nasync def worker():\n    return 42\nasync def f():\n    return await asyncio.to_thread(worker)\n"
+    findings = _run(code, ["CH093"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH093"
+
+
+def test_ch093_ignores_sync_function():
+    code = "import asyncio\ndef worker():\n    return 42\nasync def f():\n    return await asyncio.to_thread(worker)\n"
+    assert _run(code, ["CH093"]) == []
+
+
+# --- CH094 duplicate-kwarg-via-dict-unpack -----------------------------------------------------------
+
+
+def test_ch094_flags_duplicate_keyword_via_dict_unpack():
+    code = "def f(**kwargs):\n    return kwargs\ndef g():\n    return f(a=1, **{'a': 2})\n"
+    findings = _run(code, ["CH094"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH094"
+
+
+def test_ch094_ignores_no_overlap():
+    code = "def f(**kwargs):\n    return kwargs\ndef g():\n    return f(a=1, **{'b': 2})\n"
+    assert _run(code, ["CH094"]) == []
+
+
+# --- CH095 multiprocessing-spawn-lambda-target --------------------------------------------------------
+
+
+def test_ch095_flags_lambda_target_on_spawn_context():
+    code = (
+        "import multiprocessing\n"
+        "def f():\n"
+        "    ctx = multiprocessing.get_context('spawn')\n"
+        "    p = ctx.Process(target=lambda: None)\n"
+        "    return p\n"
+    )
+    findings = _run(code, ["CH095"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH095"
+
+
+def test_ch095_ignores_default_context():
+    code = "import multiprocessing\ndef f():\n    p = multiprocessing.Process(target=lambda: None)\n    return p\n"
+    assert _run(code, ["CH095"]) == []
+
+
+def test_ch095_ignores_named_function_target():
+    code = (
+        "import multiprocessing\n"
+        "def worker(): pass\n"
+        "def f():\n"
+        "    ctx = multiprocessing.get_context('spawn')\n"
+        "    p = ctx.Process(target=worker)\n"
+        "    return p\n"
+    )
+    assert _run(code, ["CH095"]) == []
+
+
+# --- CH096 post-init-on-non-dataclass --------------------------------------------------------------
+
+
+def test_ch096_flags_post_init_on_plain_class():
+    code = "class Foo:\n    def __init__(self):\n        pass\n    def __post_init__(self):\n        self.ready = True\n"
+    findings = _run(code, ["CH096"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH096"
+
+
+def test_ch096_ignores_dataclass():
+    code = "from dataclasses import dataclass\n@dataclass\nclass Foo:\n    x: int\n    def __post_init__(self):\n        self.ready = True\n"
+    assert _run(code, ["CH096"]) == []
+
+
+def test_ch096_ignores_custom_decorator():
+    code = "@config\nclass Foo:\n    def __post_init__(self):\n        self.ready = True\n"
+    assert _run(code, ["CH096"]) == []
+
+
+def test_ch096_ignores_dataclass_subclass_inheriting_it():
+    code = (
+        "from dataclasses import dataclass\n"
+        "class Base:\n"
+        "    def __post_init__(self):\n        self.ready = True\n"
+        "@dataclass\n"
+        "class Sub(Base):\n    x: int\n"
+    )
+    assert _run(code, ["CH096"]) == []
+
+
+# --- CH097 raise-not-implemented-singleton ------------------------------------------------------------
+
+
+def test_ch097_flags_raise_not_implemented():
+    code = "def f():\n    raise NotImplemented\n"
+    findings = _run(code, ["CH097"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH097"
+
+
+def test_ch097_ignores_not_implemented_error():
+    code = "def f():\n    raise NotImplementedError\n"
+    assert _run(code, ["CH097"]) == []
+
+
+# --- CH098 multiple-slots-layout-conflict ---------------------------------------------------------------
+
+
+def test_ch098_flags_two_slotted_bases():
+    code = "class A:\n    __slots__ = ('a',)\nclass B:\n    __slots__ = ('b',)\nclass C(A, B):\n    __slots__ = ()\n"
+    findings = _run(code, ["CH098"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH098"
+
+
+def test_ch098_ignores_one_slotted_base():
+    code = "class A:\n    __slots__ = ('a',)\nclass B:\n    pass\nclass C(A, B):\n    __slots__ = ()\n"
+    assert _run(code, ["CH098"]) == []
+
+
+# --- CH099 maketrans-mismatched-length ------------------------------------------------------------------
+
+
+def test_ch099_flags_mismatched_length_literals():
+    code = "def f():\n    return str.maketrans('abc', 'de')\n"
+    findings = _run(code, ["CH099"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH099"
+
+
+def test_ch099_ignores_matching_length():
+    code = "def f():\n    return str.maketrans('abc', 'xyz')\n"
+    assert _run(code, ["CH099"]) == []
+
+
+# --- CH100 iter-returns-self-no-next --------------------------------------------------------------------
+
+
+def test_ch100_flags_iter_returns_self_no_next():
+    code = "class Foo:\n    def __iter__(self):\n        return self\n"
+    findings = _run(code, ["CH100"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH100"
+
+
+def test_ch100_ignores_with_next_defined():
+    code = "class Foo:\n    def __iter__(self):\n        return self\n    def __next__(self):\n        raise StopIteration\n"
+    assert _run(code, ["CH100"]) == []
+

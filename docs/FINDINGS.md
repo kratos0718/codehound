@@ -1,17 +1,18 @@
 # Findings in the wild
 
-Eight of the eighty-eight `codehound` rules were distilled from a bug
+Eight of the one hundred `codehound` rules were distilled from a bug
 found in a real, widely-used open-source project, with the fix submitted
 as a pull request. The rest (CH007-CH009, CH012-CH050, CH052-CH057,
-CH059-CH066, CH069-CH075, CH078-CH083, CH086-CH088) are hardening rules
-verified through real false positives against a ~29-framework validation
-corpus instead of a found-and-merged bug - see "Notes on precision" below
-for why, and what that absence itself says. CH026, CH029, CH034, CH036,
-CH038, CH045, CH046, CH047, CH051, CH058, CH067, CH068, CH076, CH077,
-CH084, and CH085 are partial exceptions: each found real,
-previously-unreported bugs on their first (or, for CH051/CH058/CH069/
-CH079/CH085, a later narrowed) scan, but not all of them have a PR yet -
-see "Real bugs found, not yet filed" below.
+CH059-CH066, CH069-CH075, CH078-CH083, CH086-CH090, CH092-CH100) are
+hardening rules verified through real false positives against a
+~29-framework validation corpus instead of a found-and-merged bug - see
+"Notes on precision" below for why, and what that absence itself says.
+CH026, CH029, CH034, CH036, CH038, CH045, CH046, CH047, CH051, CH058,
+CH067, CH068, CH076, CH077, CH084, CH085, and CH091 are partial
+exceptions: each found real, previously-unreported bugs on their first
+(or, for CH051/CH058/CH069/CH079/CH085/CH091, a later narrowed) scan,
+but not all of them have a PR yet - see "Real bugs found, not yet filed"
+below.
 
 Five more checks were built, corpus-scanned, and **rejected outright**
 across this project's history, joining the same discipline that turned
@@ -820,6 +821,99 @@ without needing to be re-taught:**
   reached independently from a "no `raise` in the handler" bar instead
   of that check's original unconditional one.
 
+- **CH091 (`hash-eq-field-mismatch`), seven distinct real false-positive
+  patterns found across one corpus, 21 hits narrowed to the single real
+  bug reported above.** Each was a different, legitimate way for
+  `__hash__` and `__eq__` to reference "the same field" without the two
+  method bodies looking alike syntactically - the deepest precision
+  chase of any check this project has shipped, and every single sample
+  read (bar one) turned out to be correct code, not a bug:
+  1. **A method call standing in for a field** - transformers'
+     `GenerationConfig.__hash__` does `hash(self.to_json_string())`;
+     the method could read any number of fields internally, invisible
+     from the call site. Fixed by walking the hash expression for any
+     `self.<method>()` call and bailing out (skipping the class
+     entirely) rather than guessing what it touches.
+  2. **A `@property` standing in for a field** - mlflow's
+     `EvaluationDataset.__hash__` does `hash(self.hash)`, where `hash`
+     is a `@property` returning a content-derived digest (`self._hash`,
+     "includes hash on first 20 rows and last 20 rows") that's likely
+     already consistent with `__eq__`'s full-data comparison, just not
+     provably so from the property's name alone. Same bail-out as #1,
+     generalized to any `@property`/`@cached_property` reference.
+  3. **Multi-field equality spelled as a tuple comparison, not named
+     pairs** - vllm's `DeviceCapability.__eq__` does `(self.major,
+     self.minor) == (other.major, other.minor)`, which the original
+     extraction (looking only at bare `self.x == other.x` operands)
+     didn't recognize as comparing `major`/`minor` at all, flagging
+     both as "missing" from a `__hash__` that legitimately used them.
+     Fixed by searching the *entire* subtree of each side of a `==`
+     comparison for `self.<attr>` references, not just the immediate
+     operand - which, as a side effect, also correctly handles a field
+     compared through a wrapping call (see #4).
+  4. **Multi-field equality compared through a call, not directly** -
+     letta's `ParentToolRule.__eq__` does `sorted(self.children) ==
+     sorted(other.children)` for order-independent list comparison;
+     the broadened extraction from #3 already covers this, since it
+     walks the whole operand subtree rather than requiring a bare
+     attribute.
+  5. **Blanket equality via `__dict__`** - mlflow's `Metric.__eq__` does
+     `self.__dict__ == other.__dict__`, comparing every instance
+     attribute at once. By definition this already covers whatever
+     `__hash__` references, so `__dict__` is recognized as a signal to
+     skip the whole class rather than treated as one named field (which
+     would have flagged `__dict__` itself as "not compared" against
+     anything the hash uses).
+  6. **Blanket equality via reflection** - transformers' `SizeDict.__eq__`
+     does `tuple(getattr(self, f.name) for f in fields(self)) ==
+     tuple(getattr(other, f.name) for f in fields(self))`, the
+     `dataclasses.fields()` equivalent of #5 - recognized the same way,
+     skipping the class when a `getattr(...)`/`fields(...)` call
+     appears inside a comparison operand.
+  7. **The same field reached through different names** -
+     semantic-kernel's `AgentId.__eq__` compares the public properties
+     `self.type`/`self.key`, while `__hash__` reads the private
+     attributes they wrap, `self._type`/`self._key`, directly. Fixed by
+     resolving any `@property` whose entire body is `return self._x`
+     to the attribute it returns, then treating a property name in
+     `__eq__` and the private attribute it wraps in `__hash__` as the
+     same field instead of two unrelated ones.
+
+  Two more, smaller fixes along the way: `self.__class__` inside a hash
+  tuple (pydantic-ai's `ModelRetry`, hashing `(self.__class__,
+  self.message)` for type-discrimination) is never treated as a field
+  needing a matching `__eq__` comparison, since any correct `__eq__`
+  already establishes type equivalence via `isinstance()` rather than
+  spelling it as `self.__class__ == other.__class__`; and `is` counts
+  as a valid comparison operator alongside `==` (pydantic-ai's
+  `MCPToolset`, comparing `self.client is other.client` in `__eq__`
+  against `id(self.client)` in `__hash__` - both deliberately
+  identity-based for a field that isn't meaningfully value-comparable).
+  Each fix was verified against the specific file that surfaced it
+  before moving to the next; the corpus count only reached 0 real
+  false positives (with the one genuine bug above surviving) after all
+  seven were in place - accepted as the stopping point rather than
+  continuing to hunt for an eighth pattern with no further corpus
+  evidence to justify it.
+- **CH096 (`post-init-on-non-dataclass`), 615 hits collapsing to 1 real
+  false positive left after the main fix.** The original design flagged
+  any `__post_init__` on a class with no `@dataclass` decorator - and
+  found the exact same convention independently reinvented twice, both
+  invisible from a single file: vllm's own `@config` decorator (not
+  literally named `dataclass`) builds a pydantic dataclass internally
+  (`dataclass(cls, config=merged_config)`); transformers' base
+  `PreTrainedConfig.__init__` calls `self.__post_init__(**kwargs)`
+  itself as a documented hook, with no decorator involved at all, so
+  any subclass picks up the call for free (554 hits in transformers
+  alone). Narrowed to the only airtight shape - no decorator *and* no
+  base class at all - which cut the count from 615 to 1. That last one,
+  HuggingFace `datasets`' `_ArrayXD`, needed a second fix: it's a bare,
+  undecorated base class with `__post_init__`, but `Array2D(_ArrayXD)`
+  and three siblings are all `@dataclass`-decorated and inherit both the
+  method and dataclass's call to it. Fixed by checking every other class
+  in the file for one that both subclasses the flagged class by name and
+  carries a dataclass-like decorator, before flagging.
+
 These are why the test suite asserts *both* directions: bad code flagged, good code
 left alone.
 
@@ -1227,6 +1321,23 @@ Two more real bugs found the same way, in different checks:
   **kwargs)` adds one kwarg and forwards the rest straight to `fn`, with
   no wraps either. Not filed yet - same batch-size-vs.-triage tradeoff
   as CH077 above.
+- **CH091 (`hash-eq-field-mismatch`), one real hit in semantic-kernel,
+  surviving seven rounds of narrowing against real-world false positives
+  (see "Notes on precision" below).**
+  `contents/history_reducer/chat_history_summarization_reducer.py`'s
+  `ChatHistorySummarizationReducer.__eq__` compares exactly four fields
+  (`threshold_count`, `target_count`, `use_single_summary`,
+  `summarization_instructions`), but `__hash__` mixes in two more
+  (`fail_on_error`, `include_function_content_in_summary`) that `__eq__`
+  never looks at. Two reducer instances differing only in
+  `fail_on_error` or `include_function_content_in_summary` compare equal
+  but hash differently - putting one in a set and then checking for the
+  other with `in` silently returns `False` even though `==` would say
+  `True`. Not filed yet - needs a decision on whether the missing two
+  fields belong in `__eq__` (the more conservative fix, widening what
+  counts as "equal") or should be dropped from `__hash__` (narrower, but
+  changes the object's hash-bucket distribution), which the check itself
+  can't determine.
 
 ## Bugs the tool found on its own
 

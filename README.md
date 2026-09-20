@@ -12,7 +12,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21851079.svg)](https://doi.org/10.5281/zenodo.21851079)
 
-**[Try it in your browser — no install](https://kratos0718.github.io/codehound/)** — paste Python, click Scan, see real findings from all 88 checks. Runs entirely client-side via [Pyodide](https://pyodide.org) (Python compiled to WebAssembly); your code never leaves the page.
+**[Try it in your browser — no install](https://kratos0718.github.io/codehound/)** — paste Python, click Scan, see real findings from all 100 checks. Runs entirely client-side via [Pyodide](https://pyodide.org) (Python compiled to WebAssembly); your code never leaves the page.
 
 Most linters flag style. `codehound` flags the *subtle correctness and async-safety bugs* that slip past code review and only bite in production — event-loop stalls, shared mutable state, leaked file descriptors, fire-and-forget tasks that get garbage-collected mid-run.
 
@@ -279,6 +279,18 @@ repos:
 | **CH086** | `deepcopy-self-with-lock` | `copy.deepcopy(self)` inside a class that constructs a `threading.Lock`/`RLock`/`Condition`/etc. as an instance attribute — always raises `TypeError`, locks can't be pickled or deep-copied. | hardening rule — zero corpus hits |
 | **CH087** | `enumerate-start-offset-reindex` | `enumerate(seq, start=N)`'s offset counter is used to re-index the same `seq` — the counter is offset, but `seq` is still walked 0-indexed, so this reads the wrong element and eventually raises `IndexError`. | hardening rule — zero corpus hits |
 | **CH088** | `regex-flags-passed-as-count` | A `re.X` flag (`re.IGNORECASE`, ...) passed positionally to `re.sub`/`re.subn`/`re.split` lands in the `count`/`maxsplit` slot instead of `flags` — silently ignored, replacement/splitting just stops early instead. | hardening rule — zero corpus hits |
+| **CH089** | `bytes-str-join-mismatch` | `str.join()` given a list of bytes, or `bytes.join()` given a list of strings — `join()` never mixes the two families, always raises `TypeError`. | hardening rule — zero corpus hits |
+| **CH090** | `exit-returns-true-unconditionally` | `__exit__`/`__aexit__` always returns `True` with no branch on the exception type — silently suppresses every exception the `with` block ever raises, not just ones it's meant to handle. | hardening rule — zero corpus hits |
+| **CH091** | `hash-eq-field-mismatch` | `__hash__` uses a field `__eq__` doesn't compare — two instances `__eq__` considers equal can hash differently, breaking set/dict lookups for them. | hardening rule — real hit in semantic-kernel |
+| **CH092** | `path-write-type-mismatch` | `Path.write_text()` given bytes, or `Path.write_bytes()` given a string — neither encodes/decodes implicitly, always raises `TypeError`. | hardening rule — zero corpus hits |
+| **CH093** | `asyncio-to-thread-async-function` | `asyncio.to_thread()` given an async function — it only constructs a coroutine object in the worker thread, never runs its body, and the result is a never-awaited coroutine. | hardening rule — zero corpus hits |
+| **CH094** | `duplicate-kwarg-via-dict-unpack` | A call passes the same keyword both explicitly and through a `**`-unpacked dict literal — both target the same parameter, raising `TypeError`. | hardening rule — zero corpus hits |
+| **CH095** | `multiprocessing-spawn-lambda-target` | A `spawn`/`forkserver` multiprocessing context given a lambda as `target=`/`initializer=` — spawn pickles the target to hand it to the new interpreter, and a lambda can never be pickled. | hardening rule — zero corpus hits |
+| **CH096** | `post-init-on-non-dataclass` | `__post_init__` defined on a class with no decorator, no base, and no `@dataclass`-decorated subclass inheriting it — nothing ever calls it, silently dead code. | hardening rule — zero corpus hits |
+| **CH097** | `raise-not-implemented-singleton` | `raise NotImplemented` raises the singleton value, not an exception — always raises `TypeError` instead of the intended `NotImplementedError`. | hardening rule — zero corpus hits |
+| **CH098** | `multiple-slots-layout-conflict` | A class inherits from two or more bases that each declare a non-empty `__slots__` — CPython can only graft one instance layout per class, raises `TypeError` at import time. | hardening rule — zero corpus hits |
+| **CH099** | `maketrans-mismatched-length` | `str.maketrans(a, b)` with two literal strings of different lengths — the two-argument form pairs them up by index, always raises `ValueError`. | hardening rule — zero corpus hits |
+| **CH100** | `iter-returns-self-no-next` | `__iter__` returns `self`, but the class defines no `__next__` — `iter()` succeeds, but the first `next()` call raises `TypeError`. | hardening rule — zero corpus hits |
 
 `codehound list` prints this from the source of truth.
 
@@ -619,6 +631,18 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
       `datetime`, a weakref to an object with no other reference,
       `itertools.tee`'s original iterator reused, and a regex flag
       landing in `re.sub`'s `count` slot instead of `flags` — CH071-CH088
+- [x] 100 checks — `__hash__` using a field `__eq__` doesn't compare
+      (real hit in semantic-kernel), `__exit__` unconditionally
+      suppressing every exception, `str`/`bytes` mixed into the same
+      `.join()`, `Path.write_text()`/`write_bytes()` given the wrong
+      type, `asyncio.to_thread()` given an async function (only
+      constructs the coroutine, never runs it), the same keyword passed
+      both directly and through a `**`-unpacked dict, a lambda target on
+      a spawn/forkserver multiprocessing context, `__post_init__` on a
+      class nothing calls it on, `raise NotImplemented` instead of
+      `NotImplementedError`, two `__slots__`-declaring bases colliding,
+      `str.maketrans()` with mismatched-length arguments, and `__iter__`
+      returning `self` with no `__next__` — CH089-CH100
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Extend CH001 to a curated denylist of sync AI/agent SDK client calls inside async functions (vector-DB clients, LLM SDKs) — the gap flake8-async's stdlib-only denylist leaves open
 
