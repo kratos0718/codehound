@@ -49,22 +49,6 @@ runs:
           pip install codehound
         fi
 
-    - name: Run codehound (SARIF)
-      if: inputs.upload-sarif == 'true'
-      shell: bash
-      run: |
-        select_arg=()
-        if [ -n "${{ inputs.select }}" ]; then
-          select_arg=(--select "${{ inputs.select }}")
-        fi
-        codehound scan "${{ inputs.path }}" "${select_arg[@]}" --format sarif --exit-zero > codehound-results.sarif
-
-    - name: Upload SARIF to GitHub Code Scanning
-      if: inputs.upload-sarif == 'true'
-      uses: github/codeql-action/upload-sarif@v3
-      with:
-        sarif_file: codehound-results.sarif
-
     - name: Run codehound
       id: scan
       shell: bash
@@ -73,12 +57,44 @@ runs:
         if [ -n "${{ inputs.select }}" ]; then
           select_arg=(--select "${{ inputs.select }}")
         fi
-        set +e
-        output=$(codehound scan "${{ inputs.path }}" "${select_arg[@]}" --exit-zero 2>&1)
-        count=$(echo "$output" | grep -oE "Found [0-9]+ issue" | grep -oE "[0-9]+" || echo 0)
-        echo "$output"
+        codehound scan "${{ inputs.path }}" "${select_arg[@]}" --format json --exit-zero > codehound-results.json
+        python3 -c "import sys, textwrap; exec(textwrap.dedent(sys.stdin.read()))" <<'PYEOF'
+        import json
+        findings = json.load(open("codehound-results.json"))
+        for f in findings:
+            print(f"{f['path']}:{f['line']}:{f['col']}: {f['code']} {f['message']}")
+        print(f"Found {len(findings)} issue(s)")
+        PYEOF
+        count=$(python3 -c "import json; print(len(json.load(open('codehound-results.json'))))")
         echo "finding-count=$count" >> "$GITHUB_OUTPUT"
-        set -e
+
+    - name: Convert to SARIF
+      if: inputs.upload-sarif == 'true'
+      shell: bash
+      run: |
+        python3 -c "import sys, textwrap; exec(textwrap.dedent(sys.stdin.read()))" <<'PYEOF'
+        import json
+        from codehound.checks import get_checks
+        from codehound.core import Finding
+        from codehound.sarif import to_sarif
+
+        select = "${{ inputs.select }}"
+        checks = get_checks(select.split(",") if select else None)
+        raw = json.load(open("codehound-results.json"))
+        findings = [Finding(**f) for f in raw]
+        json.dump(to_sarif(findings, [type(c) for c in checks]), open("codehound-results.sarif", "w"))
+        PYEOF
+
+    - name: Upload SARIF to GitHub Code Scanning
+      if: inputs.upload-sarif == 'true'
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: codehound-results.sarif
+
+    - name: Fail on findings
+      shell: bash
+      run: |
+        count="${{ steps.scan.outputs.finding-count }}"
         if [ "${{ inputs.fail-on-findings }}" == "true" ] && [ "$count" -gt 0 ]; then
           exit 1
         fi
