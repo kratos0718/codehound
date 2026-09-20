@@ -12,7 +12,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21851079.svg)](https://doi.org/10.5281/zenodo.21851079)
 
-**[Try it in your browser — no install](https://kratos0718.github.io/codehound/)** — paste Python, click Scan, see real findings from all 70 checks. Runs entirely client-side via [Pyodide](https://pyodide.org) (Python compiled to WebAssembly); your code never leaves the page.
+**[Try it in your browser — no install](https://kratos0718.github.io/codehound/)** — paste Python, click Scan, see real findings from all 88 checks. Runs entirely client-side via [Pyodide](https://pyodide.org) (Python compiled to WebAssembly); your code never leaves the page.
 
 Most linters flag style. `codehound` flags the *subtle correctness and async-safety bugs* that slip past code review and only bite in production — event-loop stalls, shared mutable state, leaked file descriptors, fire-and-forget tasks that get garbage-collected mid-run.
 
@@ -261,6 +261,24 @@ repos:
 | **CH068** | `logging-extra-reserved-key` | A logging call's `extra={}` dict uses a key that's already a `LogRecord` attribute (`name`, `message`, `module`, ...) — raises `KeyError` the moment that specific call actually fires, which is easy to leave unexercised if the logger's level normally filters it out. | hardening rule — real hit in litellm |
 | **CH069** | `contextvar-mutable-default` | A `contextvars.ContextVar`'s mutable default is mutated directly on `.get()` elsewhere in the file — every context that never calls `.set(...)` first shares that same object, defeating the point of a context variable. Only fires with proof of an actual in-place mutation; the first corpus scan's real hits (letta, llama_index, qdrant-client, pydantic-ai) all turned out to already use the correct copy-then-`.set()` pattern (see below). | hardening rule — zero corpus hits after narrowing |
 | **CH070** | `threading-local-mutable-class-attr` | A `threading.local` subclass's class-level mutable attribute is looked up on the class itself, the same for every thread — silently defeating the one thing `threading.local` exists to guarantee. | hardening rule — zero corpus hits |
+| **CH071** | `weakref-to-ephemeral-object` | `weakref.ref()`/`.proxy()` targets an object constructed inline as its own argument — nothing else holds a reference, so it can be collected before the weakref is ever used, and calling it back returns `None` silently forever. | hardening rule — zero corpus hits |
+| **CH072** | `itertools-tee-original-reused` | The original iterator passed to `itertools.tee()` is iterated again afterward, silently desyncing every tee'd copy and dropping elements from all of them. | hardening rule — zero corpus hits |
+| **CH073** | `str-on-bytes` | `str()` on a bytes literal or `.encode()` result produces the `b'...'` repr, not decoded text — the classic Python 2→3 porting bug. | hardening rule — zero corpus hits |
+| **CH074** | `empty-literal-sequence-crash` | `random.choice`, `max`/`min` without `default=`, `functools.reduce` without an initial value, or `statistics.mean`/`median`/etc. called on a literal empty sequence — always raises, no code path where the constant becomes non-empty. | hardening rule — zero corpus hits |
+| **CH075** | `repr-calls-str-recursion` | `__repr__` calls `str(self)` (or formats `self` directly) with no `__str__` defined and no base class — `object`'s default `__str__` falls back to `__repr__`, so this recurses infinitely on every call. | hardening rule — zero corpus hits |
+| **CH076** | `duplicate-method-definition` | The same method name is defined twice, directly, in one class body — the second silently replaces the first, leaving the earlier one as dead code. | hardening rule — real hit in mlflow (`_Trace.get_artifact_root` defined twice) |
+| **CH077** | `abstractmethod-without-abc` | `@abstractmethod` on a class with no base classes and no `metaclass=ABCMeta` does nothing — there's no enforcement mechanism, so subclasses that never implement it instantiate without error. | hardening rule — real hits across 17 projects (AutoGPT, mlflow, letta, vllm, and others) |
+| **CH078** | `frozen-dataclass-post-init-mutation` | `self.x = ...` inside `__post_init__` of a `@dataclass(frozen=True)` class raises `FrozenInstanceError` — frozen blocks assignment even from its own `__post_init__`. | hardening rule — zero corpus hits |
+| **CH079** | `dataclass-non-default-after-default` | A `@dataclass` field with no default is declared after one that has a default — raises `TypeError` at import time. | hardening rule — zero corpus hits after excluding `field(init=False)`, `ClassVar` fields, the `KW_ONLY` sentinel, and class-level `kw_only=True`/`init=False` (see below) |
+| **CH080** | `namedtuple-non-default-after-default` | A `typing.NamedTuple` field with no default is declared after one that has a default — raises `TypeError` at import time, the `NamedTuple` sibling of CH079. | hardening rule — zero corpus hits |
+| **CH081** | `slots-conflicts-class-variable` | A name in `__slots__` also has a class-level value assignment — raises `ValueError` at import time. | hardening rule — zero corpus hits after excluding classes with a custom `metaclass=` |
+| **CH082** | `python2-removed-dunder` | A Python 2 special method (`__nonzero__`, `__unicode__`, `__cmp__`, `__div__`, `__getslice__`, ...) is defined — Python 3 never looks it up, silently dead code that raises no warning. | hardening rule — zero corpus hits |
+| **CH083** | `json-dumps-datetime` | `json.dumps()`/`.dump()` is given a `datetime`/`date` object built inline, with no `default=`/`cls=` to handle it — raises `TypeError`. | hardening rule — zero corpus hits |
+| **CH084** | `defaultdict-read-creates-key` | A `defaultdict` subscript used directly as an `if`/`while` condition's test silently inserts the key as a side effect of the read. | hardening rule — real hit in optuna |
+| **CH085** | `decorator-missing-functools-wraps` | A decorator's inner wrapper calls the wrapped function (forwarding its own args/kwargs through) but has no `@functools.wraps` or equivalent — the decorated function silently loses its own `__name__`/`__doc__`/`__module__`. | hardening rule — real hits across 17 projects (AutoGPT, vllm, and others) |
+| **CH086** | `deepcopy-self-with-lock` | `copy.deepcopy(self)` inside a class that constructs a `threading.Lock`/`RLock`/`Condition`/etc. as an instance attribute — always raises `TypeError`, locks can't be pickled or deep-copied. | hardening rule — zero corpus hits |
+| **CH087** | `enumerate-start-offset-reindex` | `enumerate(seq, start=N)`'s offset counter is used to re-index the same `seq` — the counter is offset, but `seq` is still walked 0-indexed, so this reads the wrong element and eventually raises `IndexError`. | hardening rule — zero corpus hits |
+| **CH088** | `regex-flags-passed-as-count` | A `re.X` flag (`re.IGNORECASE`, ...) passed positionally to `re.sub`/`re.subn`/`re.split` lands in the `count`/`maxsplit` slot instead of `flags` — silently ignored, replacement/splitting just stops early instead. | hardening rule — zero corpus hits |
 
 `codehound list` prints this from the source of truth.
 
@@ -591,6 +609,16 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
       mutated in place on `.get()`, and a `threading.local` subclass
       leaking a class-level mutable attribute across every thread —
       CH061-CH070
+- [x] 88 checks — `@abstractmethod` with no `ABCMeta` to enforce it (real
+      hits across 17 projects), a decorator's wrapper missing
+      `@functools.wraps` (real hits across 17 more), dataclass/NamedTuple
+      field ordering, `__slots__` conflicting with a class variable,
+      Python 2 dunders (`__nonzero__`, `__unicode__`) that Python 3
+      silently never calls, a `defaultdict` subscript read inside an
+      `if` inserting the key as a side effect, `json.dumps()` on a raw
+      `datetime`, a weakref to an object with no other reference,
+      `itertools.tee`'s original iterator reused, and a regex flag
+      landing in `re.sub`'s `count` slot instead of `flags` — CH071-CH088
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Extend CH001 to a curated denylist of sync AI/agent SDK client calls inside async functions (vector-DB clients, LLM SDKs) — the gap flake8-async's stdlib-only denylist leaves open
 

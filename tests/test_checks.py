@@ -3297,3 +3297,488 @@ def test_ch070_ignores_immutable_class_attr_on_threading_local():
     code = "import threading\nclass MyLocal(threading.local):\n    name = 'default'\n"
     assert _run(code, ["CH070"]) == []
 
+
+# --- CH071 weakref-to-ephemeral-object --------------------------------------------------------
+
+
+def test_ch071_flags_weakref_to_inline_constructed_object():
+    code = "import weakref\nclass Foo: pass\ndef make():\n    return weakref.ref(Foo())\n"
+    findings = _run(code, ["CH071"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH071"
+
+
+def test_ch071_ignores_weakref_to_held_variable():
+    code = "import weakref\nclass Foo: pass\ndef make():\n    obj = Foo()\n    return weakref.ref(obj)\n"
+    assert _run(code, ["CH071"]) == []
+
+
+def test_ch071_ignores_getter_like_call():
+    code = "import weakref\nclass Registry:\n    def get_ref(self, key):\n        return weakref.ref(self._cache.get(key))\n"
+    assert _run(code, ["CH071"]) == []
+
+
+# --- CH072 itertools-tee-original-reused ------------------------------------------------------
+
+
+def test_ch072_flags_original_iterated_after_tee():
+    code = "import itertools\ndef f():\n    it = iter([1, 2, 3])\n    a, b = itertools.tee(it, 2)\n    next(it)\n"
+    findings = _run(code, ["CH072"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH072"
+
+
+def test_ch072_ignores_tee_without_original_reuse():
+    code = "import itertools\ndef f():\n    it = iter([1, 2, 3])\n    a, b = itertools.tee(it, 2)\n    return list(a), list(b)\n"
+    assert _run(code, ["CH072"]) == []
+
+
+# --- CH073 str-on-bytes ------------------------------------------------------------------------
+
+
+def test_ch073_flags_str_on_bytes_literal():
+    code = "def f():\n    return str(b'hello')\n"
+    findings = _run(code, ["CH073"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH073"
+
+
+def test_ch073_flags_str_on_encode_result():
+    code = "def f(x):\n    return str(x.encode('utf-8'))\n"
+    findings = _run(code, ["CH073"])
+    assert len(findings) == 1
+
+
+def test_ch073_ignores_str_with_explicit_encoding():
+    code = "def f(data):\n    return str(data, 'utf-8')\n"
+    assert _run(code, ["CH073"]) == []
+
+
+# --- CH074 empty-literal-sequence-crash -------------------------------------------------------
+
+
+def test_ch074_flags_random_choice_on_empty_literal():
+    code = "import random\ndef f():\n    return random.choice([])\n"
+    findings = _run(code, ["CH074"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH074"
+
+
+def test_ch074_flags_max_without_default_on_empty_literal():
+    code = "def f():\n    return max([])\n"
+    findings = _run(code, ["CH074"])
+    assert len(findings) == 1
+
+
+def test_ch074_ignores_max_with_default():
+    code = "def f():\n    return max([], default=0)\n"
+    assert _run(code, ["CH074"]) == []
+
+
+def test_ch074_ignores_random_choice_on_variable():
+    code = "import random\ndef f(items):\n    return random.choice(items)\n"
+    assert _run(code, ["CH074"]) == []
+
+
+# --- CH075 repr-calls-str-recursion -----------------------------------------------------------
+
+
+def test_ch075_flags_repr_calling_str_self_with_no_str_defined():
+    code = "class Foo:\n    def __repr__(self):\n        return f'Foo({str(self)})'\n"
+    findings = _run(code, ["CH075"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH075"
+
+
+def test_ch075_ignores_when_str_is_defined():
+    code = "class Foo:\n    def __repr__(self):\n        return f'Foo({str(self)})'\n    def __str__(self):\n        return 'foo'\n"
+    assert _run(code, ["CH075"]) == []
+
+
+def test_ch075_ignores_class_with_base():
+    code = "class PlainRepr(str):\n    def __repr__(self):\n        return str(self)\n"
+    assert _run(code, ["CH075"]) == []
+
+
+# --- CH076 duplicate-method-definition ---------------------------------------------------------
+
+
+def test_ch076_flags_duplicate_method_definition():
+    code = "class Foo:\n    def bar(self):\n        return 1\n    def bar(self):\n        return 2\n"
+    findings = _run(code, ["CH076"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH076"
+
+
+def test_ch076_ignores_property_setter_pair():
+    code = "class Foo:\n    @property\n    def x(self):\n        return self._x\n    @x.setter\n    def x(self, v):\n        self._x = v\n"
+    assert _run(code, ["CH076"]) == []
+
+
+def test_ch076_ignores_overload_pair():
+    code = (
+        "from typing import overload\n"
+        "class Foo:\n"
+        "    @overload\n"
+        "    def f(self, x: int) -> int: ...\n"
+        "    @overload\n"
+        "    def f(self, x: str) -> str: ...\n"
+        "    def f(self, x):\n        return x\n"
+    )
+    assert _run(code, ["CH076"]) == []
+
+
+# --- CH077 abstractmethod-without-abc ----------------------------------------------------------
+
+
+def test_ch077_flags_abstractmethod_with_no_base_no_abcmeta():
+    code = "from abc import abstractmethod\nclass Foo:\n    @abstractmethod\n    def bar(self):\n        pass\n"
+    findings = _run(code, ["CH077"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH077"
+
+
+def test_ch077_ignores_abcmeta_via_base():
+    code = "from abc import ABC, abstractmethod\nclass Foo(ABC):\n    @abstractmethod\n    def bar(self):\n        pass\n"
+    assert _run(code, ["CH077"]) == []
+
+
+def test_ch077_ignores_abcmeta_via_metaclass_kwarg():
+    code = (
+        "from abc import ABCMeta, abstractmethod\n"
+        "class Foo(metaclass=ABCMeta):\n"
+        "    @abstractmethod\n    def bar(self):\n        pass\n"
+    )
+    assert _run(code, ["CH077"]) == []
+
+
+def test_ch077_ignores_any_other_base():
+    code = "from abc import abstractmethod\nclass Foo(SomeBase):\n    @abstractmethod\n    def bar(self):\n        pass\n"
+    assert _run(code, ["CH077"]) == []
+
+
+# --- CH078 frozen-dataclass-post-init-mutation ------------------------------------------------
+
+
+def test_ch078_flags_self_assignment_in_post_init():
+    code = (
+        "from dataclasses import dataclass\n"
+        "@dataclass(frozen=True)\n"
+        "class Foo:\n"
+        "    x: int\n"
+        "    def __post_init__(self):\n        self.x = self.x * 2\n"
+    )
+    findings = _run(code, ["CH078"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH078"
+
+
+def test_ch078_ignores_object_setattr_workaround():
+    code = (
+        "from dataclasses import dataclass\n"
+        "@dataclass(frozen=True)\n"
+        "class Foo:\n"
+        "    x: int\n"
+        "    def __post_init__(self):\n        object.__setattr__(self, 'x', self.x * 2)\n"
+    )
+    assert _run(code, ["CH078"]) == []
+
+
+def test_ch078_ignores_non_frozen_dataclass():
+    code = (
+        "from dataclasses import dataclass\n"
+        "@dataclass\n"
+        "class Foo:\n"
+        "    x: int\n"
+        "    def __post_init__(self):\n        self.x = self.x * 2\n"
+    )
+    assert _run(code, ["CH078"]) == []
+
+
+# --- CH079 dataclass-non-default-after-default ------------------------------------------------
+
+
+def test_ch079_flags_required_field_after_default_field():
+    code = "from dataclasses import dataclass\n@dataclass\nclass Foo:\n    x: int = 0\n    y: int\n"
+    findings = _run(code, ["CH079"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH079"
+
+
+def test_ch079_ignores_correct_field_order():
+    code = "from dataclasses import dataclass\n@dataclass\nclass Foo:\n    x: int\n    y: int = 0\n"
+    assert _run(code, ["CH079"]) == []
+
+
+def test_ch079_ignores_class_level_kw_only():
+    code = "from dataclasses import dataclass\n@dataclass(kw_only=True)\nclass Foo:\n    x: int = 0\n    y: int\n"
+    assert _run(code, ["CH079"]) == []
+
+
+def test_ch079_ignores_field_init_false():
+    code = (
+        "from dataclasses import dataclass, field\n"
+        "@dataclass\nclass Foo:\n"
+        "    x: int = 0\n"
+        "    y: int = field(init=False)\n"
+    )
+    assert _run(code, ["CH079"]) == []
+
+
+def test_ch079_ignores_classvar_field():
+    code = (
+        "from dataclasses import dataclass\n"
+        "from typing import ClassVar\n"
+        "@dataclass\nclass Foo:\n"
+        "    x: int = 0\n"
+        "    y: ClassVar[str]\n"
+    )
+    assert _run(code, ["CH079"]) == []
+
+
+def test_ch079_ignores_after_kw_only_sentinel():
+    code = (
+        "from dataclasses import dataclass, KW_ONLY\n"
+        "@dataclass\nclass Foo:\n"
+        "    x: int = 0\n"
+        "    _: KW_ONLY\n"
+        "    y: int\n"
+    )
+    assert _run(code, ["CH079"]) == []
+
+
+# --- CH080 namedtuple-non-default-after-default -----------------------------------------------
+
+
+def test_ch080_flags_required_field_after_default_field():
+    code = "from typing import NamedTuple\nclass Foo(NamedTuple):\n    x: int = 0\n    y: int\n"
+    findings = _run(code, ["CH080"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH080"
+
+
+def test_ch080_ignores_correct_field_order():
+    code = "from typing import NamedTuple\nclass Foo(NamedTuple):\n    x: int\n    y: int = 0\n"
+    assert _run(code, ["CH080"]) == []
+
+
+# --- CH081 slots-conflicts-class-variable ------------------------------------------------------
+
+
+def test_ch081_flags_slot_name_with_class_level_value():
+    code = "class Foo:\n    __slots__ = ('x',)\n    x = 5\n"
+    findings = _run(code, ["CH081"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH081"
+
+
+def test_ch081_ignores_bare_annotation_no_value():
+    code = "class Foo:\n    __slots__ = ('x',)\n    x: int\n"
+    assert _run(code, ["CH081"]) == []
+
+
+def test_ch081_ignores_custom_metaclass():
+    code = "class Meta(type): pass\nclass Foo(metaclass=Meta):\n    __slots__ = ('x',)\n    x = 5\n"
+    assert _run(code, ["CH081"]) == []
+
+
+# --- CH082 python2-removed-dunder ---------------------------------------------------------------
+
+
+def test_ch082_flags_nonzero_dunder():
+    code = "class Foo:\n    def __nonzero__(self):\n        return False\n"
+    findings = _run(code, ["CH082"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH082"
+
+
+def test_ch082_flags_unicode_dunder():
+    code = "class Foo:\n    def __unicode__(self):\n        return 'text'\n"
+    findings = _run(code, ["CH082"])
+    assert len(findings) == 1
+
+
+def test_ch082_ignores_correct_py3_dunders():
+    code = "class Foo:\n    def __bool__(self):\n        return False\n    def __str__(self):\n        return 'text'\n"
+    assert _run(code, ["CH082"]) == []
+
+
+# --- CH083 json-dumps-datetime ------------------------------------------------------------------
+
+
+def test_ch083_flags_json_dumps_datetime_now():
+    code = "import json, datetime\ndef f():\n    return json.dumps(datetime.datetime.now())\n"
+    findings = _run(code, ["CH083"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH083"
+
+
+def test_ch083_ignores_json_dumps_with_default():
+    code = "import json, datetime\ndef f():\n    return json.dumps(datetime.datetime.now(), default=str)\n"
+    assert _run(code, ["CH083"]) == []
+
+
+def test_ch083_ignores_json_dumps_on_plain_value():
+    code = "import json\ndef f(x):\n    return json.dumps(x)\n"
+    assert _run(code, ["CH083"]) == []
+
+
+# --- CH084 defaultdict-read-creates-key ---------------------------------------------------------
+
+
+def test_ch084_flags_bare_subscript_in_if_test():
+    code = "from collections import defaultdict\ndef f():\n    d = defaultdict(list)\n    if d['k']:\n        pass\n"
+    findings = _run(code, ["CH084"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH084"
+
+
+def test_ch084_ignores_get_based_check():
+    code = "from collections import defaultdict\ndef f():\n    d = defaultdict(list)\n    if d.get('k'):\n        pass\n"
+    assert _run(code, ["CH084"]) == []
+
+
+def test_ch084_ignores_in_based_check():
+    code = "from collections import defaultdict\ndef f():\n    d = defaultdict(list)\n    if 'k' in d:\n        pass\n"
+    assert _run(code, ["CH084"]) == []
+
+
+# --- CH085 decorator-missing-functools-wraps ----------------------------------------------------
+
+
+def test_ch085_flags_wrapper_missing_wraps():
+    code = (
+        "def deco(func):\n"
+        "    def wrapper(*args, **kwargs):\n"
+        "        return func(*args, **kwargs)\n"
+        "    return wrapper\n"
+    )
+    findings = _run(code, ["CH085"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH085"
+
+
+def test_ch085_ignores_wrapper_with_wraps():
+    code = (
+        "import functools\n"
+        "def deco(func):\n"
+        "    @functools.wraps(func)\n"
+        "    def wrapper(*args, **kwargs):\n"
+        "        return func(*args, **kwargs)\n"
+        "    return wrapper\n"
+    )
+    assert _run(code, ["CH085"]) == []
+
+
+def test_ch085_ignores_manual_name_assignment():
+    code = (
+        "def deco(func):\n"
+        "    def wrapper(*args, **kwargs):\n"
+        "        return func(*args, **kwargs)\n"
+        "    wrapper.__name__ = func.__name__\n"
+        "    return wrapper\n"
+    )
+    assert _run(code, ["CH085"]) == []
+
+
+def test_ch085_ignores_update_wrapper_call():
+    code = (
+        "import functools\n"
+        "def deco(func):\n"
+        "    def wrapper(*args, **kwargs):\n"
+        "        return func(*args, **kwargs)\n"
+        "    return functools.update_wrapper(wrapper, func)\n"
+    )
+    assert _run(code, ["CH085"]) == []
+
+
+def test_ch085_ignores_non_passthrough_helper():
+    code = (
+        "def make_counter(encode_length, chunk_size=10):\n"
+        "    def count_tokens(text):\n"
+        "        return sum(encode_length(text[i:i + chunk_size]) for i in range(0, len(text), chunk_size))\n"
+        "    return count_tokens\n"
+    )
+    assert _run(code, ["CH085"]) == []
+
+
+def test_ch085_ignores_non_first_param_call():
+    code = (
+        "def make_validator(env_name, choices):\n"
+        "    def get():\n"
+        "        return choices()\n"
+        "    return get\n"
+    )
+    assert _run(code, ["CH085"]) == []
+
+
+# --- CH086 deepcopy-self-with-lock ---------------------------------------------------------------
+
+
+def test_ch086_flags_deepcopy_self_with_lock_attr():
+    code = (
+        "import copy, threading\n"
+        "class Foo:\n"
+        "    def __init__(self):\n        self.lock = threading.Lock()\n"
+        "    def clone(self):\n        return copy.deepcopy(self)\n"
+    )
+    findings = _run(code, ["CH086"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH086"
+
+
+def test_ch086_ignores_deepcopy_without_lock_attr():
+    code = (
+        "import copy\n"
+        "class Foo:\n"
+        "    def __init__(self):\n        self.x = 1\n"
+        "    def clone(self):\n        return copy.deepcopy(self)\n"
+    )
+    assert _run(code, ["CH086"]) == []
+
+
+# --- CH087 enumerate-start-offset-reindex ---------------------------------------------------------
+
+
+def test_ch087_flags_reindex_with_offset_counter():
+    code = "def f(items):\n    for i, item in enumerate(items, start=1):\n        print(items[i])\n"
+    findings = _run(code, ["CH087"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH087"
+
+
+def test_ch087_ignores_default_start_zero():
+    code = "def f(items):\n    for i, item in enumerate(items):\n        print(items[i])\n"
+    assert _run(code, ["CH087"]) == []
+
+
+def test_ch087_ignores_using_item_not_index():
+    code = "def f(items):\n    for i, item in enumerate(items, start=1):\n        print(item)\n"
+    assert _run(code, ["CH087"]) == []
+
+
+# --- CH088 regex-flags-passed-as-count -------------------------------------------------------------
+
+
+def test_ch088_flags_flag_passed_positionally_to_sub():
+    code = "import re\ndef f(text):\n    return re.sub('a', 'b', text, re.IGNORECASE)\n"
+    findings = _run(code, ["CH088"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH088"
+
+
+def test_ch088_flags_flag_passed_positionally_to_split():
+    code = "import re\ndef f(text):\n    return re.split('a', text, re.IGNORECASE)\n"
+    findings = _run(code, ["CH088"])
+    assert len(findings) == 1
+
+
+def test_ch088_ignores_flags_keyword():
+    code = "import re\ndef f(text):\n    return re.sub('a', 'b', text, flags=re.IGNORECASE)\n"
+    assert _run(code, ["CH088"]) == []
+
+
+def test_ch088_ignores_explicit_count_int():
+    code = "import re\ndef f(text):\n    return re.sub('a', 'b', text, 2)\n"
+    assert _run(code, ["CH088"]) == []
+

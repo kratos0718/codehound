@@ -109,7 +109,25 @@ src/codehound/
 │   ├── namedtuple_mutable_default.py CH067
 │   ├── logging_extra_reserved_key.py CH068
 │   ├── contextvar_mutable_default.py CH069
-│   └── threading_local_mutable_class_attr.py CH070
+│   ├── threading_local_mutable_class_attr.py CH070
+│   ├── weakref_to_ephemeral_object.py CH071
+│   ├── itertools_tee_original_reused.py CH072
+│   ├── str_on_bytes.py         CH073
+│   ├── empty_literal_sequence_crash.py CH074
+│   ├── repr_calls_str_recursion.py CH075
+│   ├── duplicate_method_definition.py CH076
+│   ├── abstractmethod_without_abc.py CH077
+│   ├── frozen_dataclass_post_init_mutation.py CH078
+│   ├── dataclass_non_default_after_default.py CH079
+│   ├── namedtuple_non_default_after_default.py CH080
+│   ├── slots_conflicts_class_variable.py CH081
+│   ├── python2_removed_dunder.py CH082
+│   ├── json_dumps_datetime.py  CH083
+│   ├── defaultdict_read_creates_key.py CH084
+│   ├── decorator_missing_functools_wraps.py CH085
+│   ├── deepcopy_self_with_lock.py CH086
+│   ├── enumerate_start_offset_reindex.py CH087
+│   └── regex_flags_passed_as_count.py CH088
 └── __init__.py      # public API surface + __version__
 ```
 
@@ -258,7 +276,7 @@ HuggingFace's `transformers` produced byte-identical output at `workers=1`
 and at the default worker count, while cutting wall-clock time from 57
 seconds to 12.
 
-## The seventy checks
+## The eighty-eight checks
 
 | Code | Detects | Key structural test |
 |------|---------|--------------------|
@@ -332,6 +350,24 @@ seconds to 12.
 | CH068 | logging `extra={}` key colliding with a `LogRecord` attribute | a call to a logging method's `extra=` keyword is a `Dict` literal with a string key matching a curated set of real `LogRecord.__dict__` attribute names (verified directly against the actual attribute list) |
 | CH069 | `ContextVar` mutable default mutated in place | `ContextVar(..., default=mutable_literal)` assigned to a `Name`, where that same name's `.get()` result is later mutated directly (`.get().append(...)`, `.get()[k] = v`) anywhere else in the module |
 | CH070 | `threading.local` subclass, class-level mutable attribute | `ClassDef` with a `threading.local` base, containing a plain `Assign` to a mutable literal at the class level |
+| CH071 | `weakref.ref()`/`.proxy()` targeting an ephemeral object | `Call` to `weakref.ref`/`.proxy` whose single argument is itself a `Call` (object built inline), excluding getter-like calls (`.get`/`.pop`/`.find`/`.fetch`/`.load`/`.read`) |
+| CH072 | original iterator reused after `itertools.tee()` | `Assign` from `tee(name, ...)` where `name` is a bare `Name`, and a later node in the same scope consumes that exact name (`for x in name:`, `next(name)`, or `list`/`tuple`/`sorted`/`sum`/`set`/`min`/`max` wrapping it) |
+| CH073 | `str()` on bytes instead of `.decode()` | single-arg `Call` to `str` whose argument is a bytes `Constant` or a `.encode(...)` call |
+| CH074 | a call guaranteed to raise on an empty sequence, given a literal empty one | `random.choice`/`max`/`min` (no `default=`)/`functools.reduce` (no initial)/`statistics.mean` family, whose sequence argument is an empty `List`/`Tuple`/`Dict` literal or a no-arg `set()` |
+| CH075 | `__repr__` calling `str(self)` with no `__str__`, no base class | `ClassDef` with zero bases, a `__repr__` but no `__str__`, whose body contains `str(self)`, an f-string embedding `self`, or `"{}"​.format(self)` |
+| CH076 | the same method name defined twice in one class body | `ClassDef.body` grouped by `FunctionDef`/`AsyncFunctionDef` name, 2+ entries, none decorated with `property`/`*.setter`/`*.deleter`/`*.getter`/`overload`/`*.register` |
+| CH077 | `@abstractmethod` with no enforcement mechanism | `ClassDef` with zero bases and no `metaclass=` keyword, containing a method decorated with `abstractmethod`/`abstractproperty` |
+| CH078 | `self.x = ...` inside `__post_init__` of a frozen dataclass | `ClassDef` decorated with `@dataclass(..., frozen=True)`, whose `__post_init__` contains a direct `Assign`/`AugAssign` to `self.<attr>` |
+| CH079 | dataclass field with no default after one that has a default | `ClassDef` decorated with `@dataclass`, walking `AnnAssign` fields in order; excludes `field(kw_only=True)`, `field(init=False)`, `ClassVar[...]` annotations, the `KW_ONLY` sentinel, and class-level `kw_only=True`/`init=False` |
+| CH080 | `NamedTuple` field with no default after one that has a default | `ClassDef` with a `NamedTuple` base, same ordering walk as CH079 without the dataclass-specific exemptions |
+| CH081 | `__slots__` name also given a class-level value | `ClassDef` with no custom `metaclass=`, where a literal `__slots__` name also appears as an `Assign`/valued-`AnnAssign` target elsewhere in the body |
+| CH082 | a Python 2 special method that Python 3 never looks up | `ClassDef` method name in a curated removed/renamed-dunder set (`__nonzero__`, `__unicode__`, `__cmp__`, `__div__`, `__getslice__`, ...) |
+| CH083 | `json.dumps()`/`.dump()` given a `datetime`/`date` built inline | `Call` to `json.dumps`/`.dump` with no `default=`/`cls=` keyword, whose value argument is a `Call` to a known datetime-factory attribute (`now`/`utcnow`/`today`/`fromtimestamp`/...) on a receiver whose name contains "date"/"time" |
+| CH084 | `defaultdict` subscript read directly as an `if`/`while` test | `Assign` from `defaultdict(...)` to a `Name`, where a later `If`/`While` test is (optionally `not`-wrapped) a bare `Subscript` on that exact name |
+| CH085 | decorator's inner wrapper missing `@functools.wraps` | outer function's first param is called by its sole inner function (in the inner's own scope, not a further-nested one), forwarding at least one of the inner's own params unchanged; inner is directly returned by outer; excludes manual `wrapper.__name__ = ...` and `functools.update_wrapper(wrapper, ...)` |
+| CH086 | `copy.deepcopy(self)` in a class holding a lock attribute | `ClassDef` whose own body sets `self.<attr> = threading.Lock()`/`RLock`/`Condition`/`Semaphore`/`Event`/`Barrier`, containing a `copy.deepcopy(self)` call in one of its methods |
+| CH087 | `enumerate(seq, start=N)`'s offset counter reused to index `seq` | `For` whose `iter` is `enumerate(name, start=N)` with `N != 0`, whose body subscripts that same `name` with the loop's own index variable |
+| CH088 | a `re.X` flag landing in `re.sub`/`.subn`'s `count` or `re.split`'s `maxsplit` slot | 4-arg `re.sub`/`.subn` or 3-arg `re.split` call with no `flags=` keyword, whose last positional argument is a flag-shaped `re.X` attribute or `|`-combination of them |
 
 Each lives in its own file with a module docstring explaining the bug and a
 real-world example of where it was found.

@@ -1,21 +1,29 @@
 # Findings in the wild
 
-Eight of the seventy `codehound` rules were distilled from a bug
+Eight of the eighty-eight `codehound` rules were distilled from a bug
 found in a real, widely-used open-source project, with the fix submitted
 as a pull request. The rest (CH007-CH009, CH012-CH050, CH052-CH057,
-CH059-CH066, CH069-CH070) are hardening rules verified through real false
-positives against a ~29-framework validation corpus instead of a
-found-and-merged bug - see "Notes on precision" below for why, and what
-that absence itself says. CH026, CH029, CH034, CH036, CH038, CH045,
-CH046, CH047, CH051, CH058, CH067, and CH068 are partial exceptions: each
-found real, previously-unreported bugs on their first (or, for
-CH051/CH058/CH069, a later narrowed) scan, but not all of them have a PR
-yet - see "Real bugs found, not yet filed" below.
+CH059-CH066, CH069-CH075, CH078-CH083, CH086-CH088) are hardening rules
+verified through real false positives against a ~29-framework validation
+corpus instead of a found-and-merged bug - see "Notes on precision" below
+for why, and what that absence itself says. CH026, CH029, CH034, CH036,
+CH038, CH045, CH046, CH047, CH051, CH058, CH067, CH068, CH076, CH077,
+CH084, and CH085 are partial exceptions: each found real,
+previously-unreported bugs on their first (or, for CH051/CH058/CH069/
+CH079/CH085, a later narrowed) scan, but not all of them have a PR yet -
+see "Real bugs found, not yet filed" below.
 
-Three more checks were built, corpus-scanned, and **rejected outright**
-this same round, joining the same discipline that turned down
-`exception-chaining` and `cancelled-error-swallowed` earlier - see the
-end of "Notes on precision" for all three and why.
+Five more checks were built, corpus-scanned, and **rejected outright**
+across this project's history, joining the same discipline that turned
+down `exception-chaining` and `cancelled-error-swallowed` originally:
+`assignment-from-sort-or-reverse`, `enum-duplicate-value`,
+`eq-without-hash`/`abstract-stub-missing-decorator` from an earlier
+round, and two more from this round - `enum-implicit-alias` and
+`bare-except-swallows-cancelled-error` - that independently rediscovered
+the exact same two rejections (enum aliasing, cancellation-swallowing)
+from first principles, using different real-world examples, before this
+file was even re-read - see the end of "Notes on precision" for all of
+it and why.
 
 | Rule | Project | ⭐ | The bug | Fix |
 |------|---------|----|---------|-----|
@@ -688,6 +696,129 @@ round - not shipped, not narrowed, deleted:**
   v`) anywhere else in the same module before flagging - cut the corpus
   count from 7 to 0, while the check still catches the genuinely unsafe
   shape directly (verified with a synthetic repro before and after).
+- **CH075 (`repr-calls-str-recursion`), 6 first-pass hits, all the same
+  base-class gap.** The check's premise - `str(self)` inside `__repr__`
+  with no `__str__` defined recurses into `object`'s default `__str__`,
+  which falls back to `__repr__` - is only true when nothing *else* in
+  the MRO already provides a real `__str__`. pydantic's own
+  `PlainRepr(str)` does `def __repr__(self): return str(self)` with no
+  `__str__` of its own, and was flagged - but `PlainRepr` subclasses
+  `str`, which already has its own non-recursive `__str__`, so
+  `str(self)` there just returns the string's content directly and
+  never touches `__repr__` at all. Verified directly with a synthetic
+  `str`-subclass repro. Fixed by requiring the class to have *no* base
+  classes at all (a pure `object` subclass) - any base, builtin or
+  custom, might supply its own safe `__str__` that a single-file AST
+  check can't see - cutting the corpus count from 6 to 0.
+- **CH079, four separate dataclass field-ordering exemptions found
+  across three corpus passes, cutting the count from 133 to 0.**
+  `@dataclass(kw_only=True)` on the *class* (not just per-field) makes
+  every field keyword-only - found in vllm's `ServeContext`, which the
+  first pass missed entirely since it only checked `field(kw_only=True)`
+  on individual fields. `field(init=False)` removes a field from
+  `__init__`'s parameter list altogether, so the ordering rule never
+  applies to it - found in huggingface_hub's `_BucketCopyFile`, where
+  `mtime: int = field(init=False)` follows a defaulted field and was
+  flagged even though it raises nothing (verified directly). A
+  `ClassVar[...]`-annotated attribute isn't a dataclass field at all -
+  `@dataclass` explicitly skips it when building `__init__` - found in
+  vllm's tensorizer config, where `_fields: ClassVar[tuple[str, ...]]`
+  with no value, sitting after several defaulted fields, was wrongly
+  treated as a bare required field. And `dataclasses.KW_ONLY` (the
+  sentinel form, `_: KW_ONLY`) switches every field declared *after* it
+  to keyword-only mid-class, without needing `kw_only=True` anywhere -
+  found in pydantic-ai's `BaseToolReturnPart` and two more classes in
+  the same file. Each was verified directly (constructing the class and
+  confirming no `TypeError`) before being added as a guard.
+- **CH081/`slots-conflicts-class-variable`, pydantic's own `BaseModel`
+  sidesteps the rule its own metaclass would otherwise trigger.**
+  `BaseModel` declares `__slots__` containing `__pydantic_extra__` and
+  also gives that name a class-level value (`= NoInitField(...)`), which
+  under plain `type` construction is exactly CH081's target shape - but
+  `BaseModel` is built with `metaclass=ModelMetaclass`, which rewrites
+  the class namespace before `type.__new__` ever sees it, so the
+  conflict never actually fires (confirmed: pydantic imports and works
+  fine). A custom metaclass can do this kind of namespace rewriting for
+  any class, so there's no way to know from the AST alone whether a
+  given conflict is real. Fixed by excluding any class with a
+  `metaclass=` keyword - cut the corpus count from 3 to 0.
+- **CH085 (`decorator-missing-functools-wraps`), three rounds of
+  narrowing, 210 → 182 → 118 → 102 hits, each round finding a distinct
+  legitimate pattern the previous bar didn't rule out.** Round one: the
+  call-detection walk descended into further-nested functions, so a
+  three-level decorator-with-arguments pattern (litellm's
+  `timeout(timeout_duration, exception_to_raise)` → `decorator(func)` →
+  `wrapper(*a, **kw)`, where only `wrapper` actually has `@wraps` and
+  needs it) misattributed `wrapper`'s own calls up to `decorator`, which
+  is just a factory. Fixed by scoping the call-walk to each function's
+  own top-level statements. Round one also missed two other legitimate
+  identity-preservation mechanisms: agno's `make_bound_method` sets
+  `bound.__name__`/`__doc__` by hand instead of decorating, and mlflow's
+  autologging safety wrappers `return update_wrapper_extended(safe_function,
+  function)` - a `functools.update_wrapper` call instead of the
+  decorator form. Round two: "calls any outer parameter" was too broad
+  - vllm's `env_list_with_choices(env_name, default, choices,
+  case_sensitive)` has an inner function that calls `choices()`, a
+  validator being invoked, not anything being wrapped; and
+  llama_index's `get_function_tool(output_cls)` passes its inner
+  `model_fn` as `fn=model_fn` into a `FunctionTool.from_defaults(...)`
+  call that already takes `name=`/`description=` explicitly, so nothing
+  about `model_fn`'s own identity is ever consulted. Fixed by requiring
+  the wrapped parameter to be the outer function's *first* parameter
+  (the idiomatic `def decorator(func):` convention) and requiring a
+  *direct* return (`return wrapper`, not merely referenced somewhere
+  inside a larger returned expression). Round three: litellm's own
+  `_get_tiktoken_count_function(encode_length, chunk_size)` builds
+  `count_tokens(text)`, which calls `encode_length(text[start:start +
+  chunk_size])` - a real, differently-behaved function (chunking and
+  summing) that merely *uses* `encode_length` as an ingredient, not a
+  transparent stand-in for it; nothing about `count_tokens` losing
+  `encode_length`'s `__name__` would even make sense, since
+  `count_tokens` already has its own, deliberately chosen name. Fixed
+  by requiring the call to forward at least one of the inner function's
+  own parameters unchanged (`*args`/`**kwargs` unpacked straight
+  through, or a same-named argument passed as-is) - the hallmark of a
+  transparent pass-through wrapper, as opposed to a closure that merely
+  calls the parameter as one ingredient among several. This narrowing
+  is deliberately not airtight against every remaining edge case (a
+  function with one fast-path branch that happens to be a bare
+  pass-through, but different overall behavior elsewhere, can still
+  slip through) - accepted as a reasonable stopping point after three
+  rounds of real, verified fixes, rather than chasing diminishing
+  returns on an increasingly fragile heuristic.
+
+**Two checks this round independently rediscovered rejections already
+documented above, using different real-world evidence, before this file
+was re-read - itself worth recording as a sign the discipline holds up
+without needing to be re-taught:**
+
+- **`enum-implicit-alias`** (two `Enum` members sharing a literal value
+  become a silent alias) came back with 6 corpus hits, and all three
+  distinct real-code instances checked were explicitly documented,
+  deliberate aliases: AutoGPT's `AnthropicModelName` has `CLAUDE_SONNET
+  = "claude-sonnet-4-6"` under a `# Rolling aliases (point to latest)`
+  comment, vllm's `Mxfp4MoeBackend` has `AITER = "AITER_MXFP4_BF16"`
+  under `# Keep the legacy name as an alias while the ROCm split
+  backend rename settles`, and letta's `PrimitiveType` has `FOLDER =
+  "source"` / `SOURCE = "source"` under `# Note: folder IDs use "source"
+  prefix for historical reasons`. Same conclusion, same discipline, as
+  `enum-duplicate-value` above - rejected, not narrowed.
+- **`bare-except-swallows-cancelled-error`** (a bare `except:`/`except
+  BaseException:` around an `await`, with no `raise` anywhere in the
+  handler, swallows `asyncio.CancelledError`) came back with 70 hits,
+  and all four samples read were deliberate: AutoGPT's executor
+  explicitly branches on exception type and marks status `TERMINATED`
+  for the `else: # CancelledError or SystemExit` case rather than
+  re-raising; agno's MCP cleanup code has `except BaseException: pass
+  # Silently ignore (includes CancelledError)`, a textbook
+  cleanup-must-not-mask-the-original-error pattern; litellm's
+  `close_model_response` swallows any error while closing a resource
+  during cleanup; and pydantic-ai's `_wrap_task.cancel(); try: await
+  _wrap_task; except (asyncio.CancelledError, BaseException): pass` is
+  the textbook-correct way to await a task's own self-initiated
+  cancellation. Same conclusion as `cancelled-error-swallowed` above,
+  reached independently from a "no `raise` in the handler" bar instead
+  of that check's original unconditional one.
 
 These are why the test suite asserts *both* directions: bad code flagged, good code
 left alone.
@@ -1043,6 +1174,59 @@ Two more real bugs found the same way, in different checks:
   this one is live in ordinary operation, not just under debug settings.
   Not filed yet - straightforward one-line fix (rename the key), found
   in the same pass the check itself was built and corpus-scanned in.
+- **CH076 (`duplicate-method-definition`), one real hit in mlflow.**
+  `store/artifact/databricks_artifact_repo_resources.py`'s `_Trace`
+  class defines `get_artifact_root(self) -> str:` twice, at two
+  different line numbers in the same class body - the second silently
+  replaces the first, making the earlier one dead code with no error or
+  warning anywhere. Not filed yet - needs a read of both bodies to know
+  which one (if either) is the intended implementation before proposing
+  a fix.
+- **CH077 (`abstractmethod-without-abc`), the batch's highest-volume
+  real finding - 185 hits across 17 projects, and the check's own
+  design makes every one of them airtight** (it only fires when a class
+  has zero base classes and no `metaclass=` keyword, so there is no
+  possible hidden `ABCMeta` coming from an invisible base - the corpus
+  scan exists to gauge real-world frequency, not to hunt false
+  positives that structurally can't occur here). Two representative
+  examples, both genuinely unenforced: AutoGPT's `forge/speech/base.py`
+  `VoiceBase` class uses `@abc.abstractmethod` on `_setup`/`_speech`
+  with no base and no `ABCMeta`, so any of its five real subclasses
+  (`ElevenLabsSpeech`, `MacOSTTS`, `GTTSVoice`, ...) that forgot to
+  implement one would instantiate without error; mlflow's
+  `store/model_registry/abstract_store.py` `AbstractStore` and
+  `llm_api/llm_client_base.py`'s `LLMClientBase` in letta are the same
+  shape - a class named "Abstract"/ending in "Base" that looks
+  enforced but isn't. Not filed yet - 17 separate PRs (each adding
+  either an `ABC` base or `metaclass=ABCMeta`, verifying nothing already
+  relies on the current unenforced instantiability) is a batch too
+  large to responsibly file without triaging project-by-project first.
+- **CH084 (`defaultdict-read-creates-key`), one real hit in optuna.**
+  `samplers/_nsgaiii/_elite_population_selection_strategy.py`'s
+  NSGA-III elite-selection loop does `if
+  reference_point_to_borderline_population[reference_point_idx]:` where
+  `reference_point_to_borderline_population` is a
+  `defaultdict(list)` - reading a reference point index that was never
+  populated silently creates an empty-list entry for it as a side
+  effect of the check itself, before the loop's own logic ever
+  decides whether that reference point should exist. Not filed yet -
+  the loop's surrounding logic needs tracing to confirm whether every
+  index checked here is already guaranteed present (in which case this
+  is a harmless but confusing read) or whether an absent one changes
+  the sampler's actual output.
+- **CH085 (`decorator-missing-functools-wraps`), 102 hits across 17
+  projects after three rounds of narrowing (see "Notes on precision"
+  below) - two representative real ones.** AutoGPT's
+  `copilot/sdk/tool_adapter.py` builds `wrapper` inside
+  `_make_truncating_wrapper(fn, tool_name, ...)`, forwarding `args`
+  straight through to `await fn(args)` and returning `wrapper` directly
+  - no `@functools.wraps(fn)`, so every MCP tool wrapped this way shows
+  up in tracebacks and tool-introspection as `wrapper`, not its real
+  name. vllm's `model_executor/models/transformers/utils.py` has the
+  same shape in `patch_tensor_constructor(fn)`: `wrapper(*args,
+  **kwargs)` adds one kwarg and forwards the rest straight to `fn`, with
+  no wraps either. Not filed yet - same batch-size-vs.-triage tradeoff
+  as CH077 above.
 
 ## Bugs the tool found on its own
 
