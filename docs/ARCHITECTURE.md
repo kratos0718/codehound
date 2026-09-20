@@ -127,7 +127,19 @@ src/codehound/
 │   ├── decorator_missing_functools_wraps.py CH085
 │   ├── deepcopy_self_with_lock.py CH086
 │   ├── enumerate_start_offset_reindex.py CH087
-│   └── regex_flags_passed_as_count.py CH088
+│   ├── regex_flags_passed_as_count.py CH088
+│   ├── bytes_str_join_mismatch.py CH089
+│   ├── exit_returns_true_unconditionally.py CH090
+│   ├── hash_eq_field_mismatch.py CH091
+│   ├── path_write_type_mismatch.py CH092
+│   ├── asyncio_to_thread_async_function.py CH093
+│   ├── duplicate_kwarg_via_dict_unpack.py CH094
+│   ├── multiprocessing_spawn_lambda_target.py CH095
+│   ├── post_init_on_non_dataclass.py CH096
+│   ├── raise_not_implemented_singleton.py CH097
+│   ├── multiple_slots_layout_conflict.py CH098
+│   ├── maketrans_mismatched_length.py CH099
+│   └── iter_returns_self_no_next.py CH100
 └── __init__.py      # public API surface + __version__
 ```
 
@@ -276,7 +288,7 @@ HuggingFace's `transformers` produced byte-identical output at `workers=1`
 and at the default worker count, while cutting wall-clock time from 57
 seconds to 12.
 
-## The eighty-eight checks
+## The one hundred checks
 
 | Code | Detects | Key structural test |
 |------|---------|--------------------|
@@ -368,6 +380,18 @@ seconds to 12.
 | CH086 | `copy.deepcopy(self)` in a class holding a lock attribute | `ClassDef` whose own body sets `self.<attr> = threading.Lock()`/`RLock`/`Condition`/`Semaphore`/`Event`/`Barrier`, containing a `copy.deepcopy(self)` call in one of its methods |
 | CH087 | `enumerate(seq, start=N)`'s offset counter reused to index `seq` | `For` whose `iter` is `enumerate(name, start=N)` with `N != 0`, whose body subscripts that same `name` with the loop's own index variable |
 | CH088 | a `re.X` flag landing in `re.sub`/`.subn`'s `count` or `re.split`'s `maxsplit` slot | 4-arg `re.sub`/`.subn` or 3-arg `re.split` call with no `flags=` keyword, whose last positional argument is a flag-shaped `re.X` attribute or `|`-combination of them |
+| CH089 | `str.join()` on bytes, or `bytes.join()` on strings | `Call` to `.join()` whose receiver is a str/bytes `Constant` and whose single arg is a `List`/`Tuple` literal of `Constant`s all of the opposite type |
+| CH090 | `__exit__`/`__aexit__` unconditionally returning `True` | every `Return` in the method returns literal `True`, and the exception-type parameter is never referenced in any `Compare` |
+| CH091 | `__hash__` referencing a field `__eq__` doesn't compare | `hash((self.a, self.b, ...))`'s `self.<attr>` references (excluding method calls, `@property`s, and `self.__class__`), minus every `self.<attr>` found inside any `==`/`is` comparison in `__eq__` (including tuple-of-attrs and call-wrapped shapes; `self.__dict__`/`getattr(...)`/`fields(...)` bail out entirely; `@property` pass-throughs resolve to the private attribute they return) |
+| CH092 | `Path.write_text()` given bytes, or `write_bytes()` given a str | single-arg `.write_text(...)` whose arg is a bytes `Constant`/`.encode(...)` call, or `.write_bytes(...)` whose arg is a str `Constant`/`.decode(...)` call |
+| CH093 | `asyncio.to_thread()` given an async function | `Call` to `asyncio.to_thread`/`to_thread` whose first arg is a bare `Name` resolving to a same-file, module-level `AsyncFunctionDef` |
+| CH094 | the same keyword passed directly and via `**`-dict-unpack | `Call` with both a `keyword(arg='x', ...)` and a `keyword(arg=None, value=Dict(...))` whose dict has a string-literal key equal to `'x'` |
+| CH095 | a lambda `target=`/`initializer=` on a spawn/forkserver context | `Name` assigned from `get_context("spawn"/"forkserver")`, whose `.Process(...)`/`.Pool(...)` call has a `target=`/`initializer=` keyword that's a `Lambda` |
+| CH096 | `__post_init__` on a class nothing calls it on | `ClassDef` with no decorator and no bases, containing `__post_init__`, where no other class in the file both subclasses it by name and carries a dataclass-like decorator |
+| CH097 | `raise NotImplemented` | `Raise.exc` is a bare `Name(id="NotImplemented")` |
+| CH098 | two `__slots__`-declaring bases on one class | `ClassDef` with 2+ bases that are themselves same-file `ClassDef`s with a non-empty `__slots__` in their own body |
+| CH099 | `str.maketrans(a, b)` with mismatched literal lengths | 2-arg `.maketrans(...)`/`maketrans(...)` call where both args are string `Constant`s of different `len()` |
+| CH100 | `__iter__` returning `self` with no `__next__` | `ClassDef` with no bases, an `__iter__` containing `return self`, and no `__next__` defined in its own body |
 
 Each lives in its own file with a module docstring explaining the bug and a
 real-world example of where it was found.

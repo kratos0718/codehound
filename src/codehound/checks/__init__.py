@@ -10,10 +10,12 @@ from codehound.checks.assert_raises_too_broad import AssertRaisesTooBroad
 from codehound.checks.async_property import AsyncProperty
 from codehound.checks.asyncio_coroutine_decorator import AsyncioCoroutineDecorator
 from codehound.checks.asyncio_run_in_loop import AsyncioRunInRunningLoop
+from codehound.checks.asyncio_to_thread_async_function import AsyncioToThreadAsyncFunction
 from codehound.checks.asyncio_wait_bare_coroutine import AsyncioWaitBareCoroutine
 from codehound.checks.augassign_without_nonlocal import AugassignWithoutNonlocal
 from codehound.checks.bare_except import BareExcept
 from codehound.checks.blocking_async import BlockingCallInAsync
+from codehound.checks.bytes_str_join_mismatch import BytesStrJoinMismatch
 from codehound.checks.collections_abc_import import CollectionsAbcImport
 from codehound.checks.contextmanager_yield_unprotected import ContextmanagerYieldUnprotected
 from codehound.checks.contextvar_mutable_default import ContextvarMutableDefault
@@ -27,6 +29,7 @@ from codehound.checks.dict_fromkeys_mutable_default import DictFromkeysMutableDe
 from codehound.checks.discarded_future import DiscardedFuture
 from codehound.checks.duplicate_dict_key import DuplicateDictKey
 from codehound.checks.duplicate_except_handler import DuplicateExceptHandler
+from codehound.checks.duplicate_kwarg_via_dict_unpack import DuplicateKwargViaDictUnpack
 from codehound.checks.duplicate_method_definition import DuplicateMethodDefinition
 from codehound.checks.duplicate_set_value import DuplicateSetValue
 from codehound.checks.duplicate_with_target import DuplicateWithTarget
@@ -34,6 +37,7 @@ from codehound.checks.empty_except_tuple import EmptyExceptTuple
 from codehound.checks.empty_literal_sequence_crash import EmptyLiteralSequenceCrash
 from codehound.checks.enumerate_start_offset_reindex import EnumerateStartOffsetReindex
 from codehound.checks.environ_reassignment import EnvironReassignment
+from codehound.checks.exit_returns_true_unconditionally import ExitReturnsTrueUnconditionally
 from codehound.checks.falsy_and_or_ternary import FalsyAndOrTernary
 from codehound.checks.finally_swallows_exception import FinallySwallowsException
 from codehound.checks.floating_process import FloatingProcess
@@ -43,7 +47,9 @@ from codehound.checks.floating_timer import FloatingTimer
 from codehound.checks.forwarded_without_unpacking import ForwardedWithoutUnpacking
 from codehound.checks.frozen_dataclass_post_init_mutation import FrozenDataclassPostInitMutation
 from codehound.checks.get_event_loop import DeprecatedGetEventLoop
+from codehound.checks.hash_eq_field_mismatch import HashEqFieldMismatch
 from codehound.checks.is_literal_comparison import IsLiteralComparison
+from codehound.checks.iter_returns_self_no_next import IterReturnsSelfNoNext
 from codehound.checks.itertools_tee_original_reused import IteratorTeeOriginalReused
 from codehound.checks.json_dumps_datetime import JsonDumpsDatetime
 from codehound.checks.lock_constructed_inline import LockConstructedInline
@@ -51,6 +57,9 @@ from codehound.checks.logging_extra_reserved_key import LoggingExtraReservedKey
 from codehound.checks.loop_closure_capture import LoopClosureCapture
 from codehound.checks.lru_cache_on_async_function import LruCacheOnAsyncFunction
 from codehound.checks.lru_cache_on_method import LruCacheOnMethod
+from codehound.checks.maketrans_mismatched_length import MaketransMismatchedLength
+from codehound.checks.multiple_slots_layout_conflict import MultipleSlotsLayoutConflict
+from codehound.checks.multiprocessing_spawn_lambda_target import MultiprocessingSpawnLambdaTarget
 from codehound.checks.mutable_class_attribute import MutableClassAttribute
 from codehound.checks.mutable_defaults import MutableDefaultArgument
 from codehound.checks.mutation_during_iteration import MutationDuringIteration
@@ -60,9 +69,12 @@ from codehound.checks.nan_equality import NanEqualityComparison
 from codehound.checks.nondeterministic_default import NondeterministicDefault
 from codehound.checks.os_path_join_absolute_literal import OsPathJoinAbsoluteLiteral
 from codehound.checks.path_absolute_literal_join import PathAbsoluteLiteralJoin
+from codehound.checks.path_write_type_mismatch import PathWriteTypeMismatch
 from codehound.checks.pointless_comparison import PointlessComparisonStatement
+from codehound.checks.post_init_on_non_dataclass import PostInitOnNonDataclass
 from codehound.checks.python2_removed_dunder import Python2RemovedDunder
 from codehound.checks.raise_literal import RaiseLiteral
+from codehound.checks.raise_not_implemented_singleton import RaiseNotImplementedSingleton
 from codehound.checks.regex_backspace_escape import RegexBackspaceEscape
 from codehound.checks.regex_flags_passed_as_count import RegexFlagsPassedAsCount
 from codehound.checks.repr_calls_str_recursion import ReprCallsStrRecursion
@@ -181,6 +193,18 @@ ALL_CHECKS: list[type[Check]] = [
     DeepcopySelfWithLock,
     EnumerateStartOffsetReindex,
     RegexFlagsPassedAsCount,
+    BytesStrJoinMismatch,
+    ExitReturnsTrueUnconditionally,
+    HashEqFieldMismatch,
+    PathWriteTypeMismatch,
+    AsyncioToThreadAsyncFunction,
+    DuplicateKwargViaDictUnpack,
+    MultiprocessingSpawnLambdaTarget,
+    PostInitOnNonDataclass,
+    RaiseNotImplementedSingleton,
+    MultipleSlotsLayoutConflict,
+    MaketransMismatchedLength,
+    IterReturnsSelfNoNext,
 ]
 
 
