@@ -657,6 +657,12 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
       conflicting with a class variable): it only checked plain
       assignments, missing the identical conflict a same-named method
       or `@property` raises.
+- [x] Fixed a false positive in CH005 (unclosed file handle): it only
+      recognized `name.close()` called directly, missing the deferred
+      idiom `closer = name.close` extracted now and invoked as
+      `closer()` later — the exact pattern in CPython's vendored
+      `lib2to3.pgen2.ParserGenerator.__init__`, found while scanning
+      `black`'s copy of it.
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Extend CH001 to a curated denylist of sync AI/agent SDK client calls inside async functions (vector-DB clients, LLM SDKs) — the gap flake8-async's stdlib-only denylist leaves open
 

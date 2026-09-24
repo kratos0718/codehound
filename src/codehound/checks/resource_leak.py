@@ -7,9 +7,13 @@ dies - which may be never if it is captured in a long-lived attribute.
 
 This check flags an ``open(...)`` whose result is assigned to a name, is not
 inside a ``with``, and has no matching ``.close()`` anywhere in the enclosing
-function.
+function - including a ``.close()`` reached indirectly, by extracting the
+bound method up front (``closer = fh.close``) and invoking it conditionally
+later (``closer()``), the pattern CPython's own ``lib2to3`` pgen module uses.
 
-Real-world: fixed in agno's ``OpenAITools.transcribe_audio``.
+Real-world: fixed in agno's ``OpenAITools.transcribe_audio``. The deferred
+bound-method-close pattern was found as a false positive while scanning
+``black``'s vendored ``blib2to3.pgen2.ParserGenerator.__init__``.
 """
 
 from __future__ import annotations
@@ -45,6 +49,33 @@ def _has_close_call(scope: ast.AST, name: str) -> bool:
                 and f.value.id == name
             ):
                 return True
+    return _has_deferred_close_call(scope, name)
+
+
+def _has_deferred_close_call(scope: ast.AST, name: str) -> bool:
+    """Detect `bound = <name>.close` extracted now and invoked as `bound()` later.
+
+    A common conditional-cleanup idiom (see pgen2's `ParserGenerator.__init__`)
+    extracts the bound method once, up front, so the decision of *whether* to
+    close can be made independently of *how*. The direct `name.close()` scan
+    above never sees a call site shaped like that.
+    """
+    bound_names: list[str] = []
+    for node in ast.walk(scope):
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Attribute)
+            and node.value.attr == "close"
+            and isinstance(node.value.value, ast.Name)
+            and node.value.value.id == name
+        ):
+            bound_names.extend(_name_targets(t) for t in node.targets)
+    flat = [n for group in bound_names for n in group]
+    if not flat:
+        return False
+    for node in ast.walk(scope):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in flat:
+            return True
     return False
 
 

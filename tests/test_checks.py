@@ -142,6 +142,29 @@ def test_ch005_ignores_returned_handle():
     assert _run(code, ["CH005"]) == []
 
 
+def test_ch005_ignores_deferred_close_via_bound_method():
+    # Real pattern from CPython's lib2to3 pgen: the decision of *whether* to
+    # close is made up front by extracting the bound method, independent of
+    # *when* it's actually invoked.
+    code = (
+        "def f(filename, stream=None):\n"
+        "    close_stream = None\n"
+        "    if stream is None:\n"
+        "        stream = open(filename)\n"
+        "        close_stream = stream.close\n"
+        "    data = stream.read()\n"
+        "    if close_stream is not None:\n"
+        "        close_stream()\n"
+        "    return data\n"
+    )
+    assert _run(code, ["CH005"]) == []
+
+
+def test_ch005_flags_bound_close_method_extracted_but_never_called():
+    code = "def f(p):\n    fh = open(p)\n    closer = fh.close\n    return fh.read()\n"
+    assert len(_run(code, ["CH005"])) == 1
+
+
 # --- CH006 floating-task ----------------------------------------------------------
 
 
