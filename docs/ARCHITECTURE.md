@@ -139,7 +139,11 @@ src/codehound/
 │   ├── raise_not_implemented_singleton.py CH097
 │   ├── multiple_slots_layout_conflict.py CH098
 │   ├── maketrans_mismatched_length.py CH099
-│   └── iter_returns_self_no_next.py CH100
+│   ├── iter_returns_self_no_next.py CH100
+│   ├── setter_before_property.py CH101
+│   ├── total_ordering_no_methods.py CH102
+│   ├── slots_non_identifier_string.py CH103
+│   └── dataclass_field_mutable_default.py CH104
 └── __init__.py      # public API surface + __version__
 ```
 
@@ -288,7 +292,7 @@ HuggingFace's `transformers` produced byte-identical output at `workers=1`
 and at the default worker count, while cutting wall-clock time from 57
 seconds to 12.
 
-## The one hundred checks
+## The one hundred and four checks
 
 | Code | Detects | Key structural test |
 |------|---------|--------------------|
@@ -392,6 +396,10 @@ seconds to 12.
 | CH098 | two `__slots__`-declaring bases on one class | `ClassDef` with 2+ bases that are themselves same-file `ClassDef`s with a non-empty `__slots__` in their own body |
 | CH099 | `str.maketrans(a, b)` with mismatched literal lengths | 2-arg `.maketrans(...)`/`maketrans(...)` call where both args are string `Constant`s of different `len()` |
 | CH100 | `__iter__` returning `self` with no `__next__` | `ClassDef` with no bases, an `__iter__` containing `return self`, and no `__next__` defined in its own body |
+| CH101 | `@x.setter`/`@x.deleter` where `x` was never bound as a property earlier in the class | decorator is `Attribute(attr in {setter,deleter,getter})` on a `Name`; that name has no earlier `Assign`/`AnnAssign`/`FunctionDef` binding in the same `ClassDef` body |
+| CH102 | `@total_ordering` with none of the four ordering dunders | `@total_ordering`-decorated `ClassDef` with no custom base, whose own body defines none of `__lt__`/`__le__`/`__gt__`/`__ge__` |
+| CH103 | `__slots__` assigned a non-identifier string | `__slots__ = <Constant str>` where the string fails `str.isidentifier()` |
+| CH104 | `dataclasses.field(default=...)` given a mutable literal | `field(...)` call's `default=` keyword is a `List`/`Dict`/`Set` literal, comprehension, or bare `list()`/`dict()`/`set()` call |
 
 Each lives in its own file with a module docstring explaining the bug and a
 real-world example of where it was found.

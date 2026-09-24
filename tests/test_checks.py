@@ -3582,6 +3582,20 @@ def test_ch081_ignores_custom_metaclass():
     assert _run(code, ["CH081"]) == []
 
 
+def test_ch081_flags_slot_name_with_method():
+    code = "class Foo:\n    __slots__ = ('x',)\n    def x(self):\n        return 5\n"
+    findings = _run(code, ["CH081"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH081"
+
+
+def test_ch081_flags_slot_name_with_property():
+    code = "class Foo:\n    __slots__ = ('x',)\n    @property\n    def x(self):\n        return 5\n"
+    findings = _run(code, ["CH081"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH081"
+
+
 # --- CH082 python2-removed-dunder ---------------------------------------------------------------
 
 
@@ -4060,4 +4074,153 @@ def test_ch100_flags_iter_returns_self_no_next():
 def test_ch100_ignores_with_next_defined():
     code = "class Foo:\n    def __iter__(self):\n        return self\n    def __next__(self):\n        raise StopIteration\n"
     assert _run(code, ["CH100"]) == []
+
+
+# --- CH101 setter-before-property -------------------------------------------------------------------------
+
+
+def test_ch101_flags_setter_with_no_property():
+    code = "class Foo:\n    @x.setter\n    def x(self, value):\n        self._x = value\n"
+    findings = _run(code, ["CH101"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH101"
+
+
+def test_ch101_flags_setter_before_property_wrong_order():
+    code = (
+        "class Foo:\n"
+        "    @x.setter\n"
+        "    def x(self, value):\n"
+        "        self._x = value\n"
+        "    @property\n"
+        "    def x(self):\n"
+        "        return self._x\n"
+    )
+    findings = _run(code, ["CH101"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH101"
+
+
+def test_ch101_ignores_property_before_setter():
+    code = (
+        "class Foo:\n"
+        "    @property\n"
+        "    def x(self):\n"
+        "        return self._x\n"
+        "    @x.setter\n"
+        "    def x(self, value):\n"
+        "        self._x = value\n"
+    )
+    assert _run(code, ["CH101"]) == []
+
+
+def test_ch101_ignores_inherited_property_still_needs_local_binding():
+    # Inheriting the property doesn't help at runtime either - still a hit.
+    code = (
+        "class Base:\n"
+        "    @property\n"
+        "    def x(self):\n"
+        "        return self._x\n"
+        "class Foo(Base):\n"
+        "    @x.setter\n"
+        "    def x(self, value):\n"
+        "        self._x = value\n"
+    )
+    findings = _run(code, ["CH101"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH101"
+
+
+# --- CH102 total-ordering-no-methods -----------------------------------------------------------------------
+
+
+def test_ch102_flags_total_ordering_with_only_eq():
+    code = (
+        "import functools\n"
+        "@functools.total_ordering\n"
+        "class Foo:\n"
+        "    def __eq__(self, other):\n"
+        "        return True\n"
+    )
+    findings = _run(code, ["CH102"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH102"
+
+
+def test_ch102_ignores_with_lt_defined():
+    code = (
+        "import functools\n"
+        "@functools.total_ordering\n"
+        "class Foo:\n"
+        "    def __eq__(self, other):\n"
+        "        return True\n"
+        "    def __lt__(self, other):\n"
+        "        return False\n"
+    )
+    assert _run(code, ["CH102"]) == []
+
+
+def test_ch102_ignores_custom_base():
+    code = (
+        "import functools\n"
+        "@functools.total_ordering\n"
+        "class Foo(Base):\n"
+        "    def __eq__(self, other):\n"
+        "        return True\n"
+    )
+    assert _run(code, ["CH102"]) == []
+
+
+# --- CH103 slots-non-identifier-string ---------------------------------------------------------------------
+
+
+def test_ch103_flags_space_separated_slots_string():
+    code = "class Foo:\n    __slots__ = 'foo bar'\n"
+    findings = _run(code, ["CH103"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH103"
+
+
+def test_ch103_flags_comma_separated_slots_string():
+    code = "class Foo:\n    __slots__ = 'foo,bar'\n"
+    findings = _run(code, ["CH103"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH103"
+
+
+def test_ch103_ignores_single_identifier_string():
+    code = "class Foo:\n    __slots__ = 'foobar'\n"
+    assert _run(code, ["CH103"]) == []
+
+
+def test_ch103_ignores_tuple_slots():
+    code = "class Foo:\n    __slots__ = ('foo', 'bar')\n"
+    assert _run(code, ["CH103"]) == []
+
+
+# --- CH104 dataclass-field-mutable-default -----------------------------------------------------------------
+
+
+def test_ch104_flags_field_default_list_literal():
+    code = "from dataclasses import dataclass, field\n@dataclass\nclass Foo:\n    items: list = field(default=[])\n"
+    findings = _run(code, ["CH104"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH104"
+
+
+def test_ch104_flags_field_default_dict_call():
+    code = "from dataclasses import dataclass, field\n@dataclass\nclass Foo:\n    items: dict = field(default=dict())\n"
+    findings = _run(code, ["CH104"])
+    assert len(findings) == 1
+    assert findings[0].code == "CH104"
+
+
+def test_ch104_ignores_default_factory():
+    code = "from dataclasses import dataclass, field\n@dataclass\nclass Foo:\n    items: list = field(default_factory=list)\n"
+    assert _run(code, ["CH104"]) == []
+
+
+def test_ch104_ignores_non_mutable_default():
+    code = "from dataclasses import dataclass, field\n@dataclass\nclass Foo:\n    count: int = field(default=0)\n"
+    assert _run(code, ["CH104"]) == []
 

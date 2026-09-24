@@ -1,4 +1,5 @@
-"""CH081 - a name in ``__slots__`` also has a class-level value assignment.
+"""CH081 - a name in ``__slots__`` also has a class-level value assignment,
+or a method defined under that same name.
 
 Verified directly:
 
@@ -7,13 +8,21 @@ Verified directly:
         x = 5
     # ValueError: 'x' in __slots__ conflicts with class variable
 
+    class S2:
+        __slots__ = ('x',)
+        def x(self):
+            return 5
+    # ValueError: 'x' in __slots__ conflicts with class variable
+
 `__slots__` reserves a descriptor-backed storage slot for each name; a
-plain class-level assignment to that same name tries to bind a class
-attribute over that descriptor, and Python refuses outright the moment
-the class body finishes executing (import time). A bare annotation with
-no value (`x: int` alongside `__slots__ = ('x',)`) is the correct,
-standard pairing and is never flagged - the conflict only exists when the
-name is actually assigned a class-level value.
+plain class-level assignment - or a `def` under that same name, which is
+just as much a class-level binding as an assignment, just via different
+syntax - tries to bind a class attribute over that descriptor, and Python
+refuses outright the moment the class body finishes executing (import
+time). A bare annotation with no value (`x: int` alongside `__slots__ =
+('x',)`) is the correct, standard pairing and is never flagged - the
+conflict only exists when the name is actually bound to something at
+class-body level.
 
 Only fires on a class with no custom `metaclass=`. Found for real in
 pydantic's own `BaseModel`: it declares `__slots__` containing
@@ -109,4 +118,18 @@ class SlotsConflictsClassVariable(Check):
                                 ),
                             )
                         )
+                elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) and stmt.name in slots:
+                    findings.append(
+                        Finding(
+                            path=path,
+                            line=stmt.lineno,
+                            col=stmt.col_offset,
+                            code=self.code,
+                            message=(
+                                f"`{cls.name}.{stmt.name}` is both in __slots__ and defined as "
+                                f"a method - raises ValueError ('{stmt.name}' in __slots__ "
+                                f"conflicts with class variable) at import time."
+                            ),
+                        )
+                    )
         return findings

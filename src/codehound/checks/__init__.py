@@ -19,6 +19,7 @@ from codehound.checks.bytes_str_join_mismatch import BytesStrJoinMismatch
 from codehound.checks.collections_abc_import import CollectionsAbcImport
 from codehound.checks.contextmanager_yield_unprotected import ContextmanagerYieldUnprotected
 from codehound.checks.contextvar_mutable_default import ContextvarMutableDefault
+from codehound.checks.dataclass_field_mutable_default import DataclassFieldMutableDefault
 from codehound.checks.dataclass_non_default_after_default import DataclassNonDefaultAfterDefault
 from codehound.checks.datetime_utcnow import DeprecatedDatetimeUtcnow
 from codehound.checks.decorator_missing_functools_wraps import DecoratorMissingFunctoolsWraps
@@ -84,8 +85,10 @@ from codehound.checks.removed_getargspec import RemovedGetargspec
 from codehound.checks.removed_stdlib_attribute import RemovedStdlibAttribute
 from codehound.checks.removed_stdlib_module import RemovedStdlibModule
 from codehound.checks.resource_leak import UnclosedFileHandle
+from codehound.checks.setter_before_property import SetterBeforeProperty
 from codehound.checks.slots_blocks_dict import SlotsBlocksDict
 from codehound.checks.slots_conflicts_class_variable import SlotsConflictsClassVariable
+from codehound.checks.slots_non_identifier_string import SlotsNonIdentifierString
 from codehound.checks.static_dict_comprehension_key import StaticDictComprehensionKey
 from codehound.checks.staticmethod_references_self import StaticmethodReferencesSelf
 from codehound.checks.str_on_bytes import StrOnBytes
@@ -93,6 +96,7 @@ from codehound.checks.strip_multichar import StripMultichar
 from codehound.checks.suppress_empty import SuppressEmpty
 from codehound.checks.threading_local_mutable_class_attr import ThreadingLocalMutableClassAttr
 from codehound.checks.total_ordering_missing_eq import TotalOrderingMissingEq
+from codehound.checks.total_ordering_no_methods import TotalOrderingNoMethods
 from codehound.checks.unawaited_coroutine import UnawaitedCoroutineCall
 from codehound.checks.unbounded_cycle_consumption import UnboundedCycleConsumption
 from codehound.checks.unclosed_pool import UnclosedPool
@@ -205,6 +209,10 @@ ALL_CHECKS: list[type[Check]] = [
     MultipleSlotsLayoutConflict,
     MaketransMismatchedLength,
     IterReturnsSelfNoNext,
+    SetterBeforeProperty,
+    TotalOrderingNoMethods,
+    SlotsNonIdentifierString,
+    DataclassFieldMutableDefault,
 ]
 
 

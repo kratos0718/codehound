@@ -4,7 +4,7 @@
 
 <h1 align="center">codehound</h1>
 
-**An AST-based static analyzer that hunts *real* bugs in large Python codebases — one hundred checks, eight backed by a bug that was actually found and merged (or opened as a PR) into a major open-source AI framework, the rest hardening rules verified against real false positives across a ~29-framework validation corpus instead of just reasoned about.**
+**An AST-based static analyzer that hunts *real* bugs in large Python codebases — one hundred and four checks, eight backed by a bug that was actually found and merged (or opened as a PR) into a major open-source AI framework, the rest hardening rules verified against real false positives across a ~29-framework validation corpus instead of just reasoned about.**
 
 [![CI](https://github.com/kratos0718/codehound/actions/workflows/ci.yml/badge.svg)](https://github.com/kratos0718/codehound/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/codehound.svg)](https://pypi.org/project/codehound/)
@@ -12,7 +12,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21851079.svg)](https://doi.org/10.5281/zenodo.21851079)
 
-**[Try it in your browser — no install](https://kratos0718.github.io/codehound/)** — paste Python, click Scan, see real findings from all 100 checks. Runs entirely client-side via [Pyodide](https://pyodide.org) (Python compiled to WebAssembly); your code never leaves the page.
+**[Try it in your browser — no install](https://kratos0718.github.io/codehound/)** — paste Python, click Scan, see real findings from all 104 checks. Runs entirely client-side via [Pyodide](https://pyodide.org) (Python compiled to WebAssembly); your code never leaves the page.
 
 Most linters flag style. `codehound` flags the *subtle correctness and async-safety bugs* that slip past code review and only bite in production — event-loop stalls, shared mutable state, leaked file descriptors, fire-and-forget tasks that get garbage-collected mid-run.
 
@@ -291,6 +291,10 @@ repos:
 | **CH098** | `multiple-slots-layout-conflict` | A class inherits from two or more bases that each declare a non-empty `__slots__` — CPython can only graft one instance layout per class, raises `TypeError` at import time. | hardening rule — zero corpus hits |
 | **CH099** | `maketrans-mismatched-length` | `str.maketrans(a, b)` with two literal strings of different lengths — the two-argument form pairs them up by index, always raises `ValueError`. | hardening rule — zero corpus hits |
 | **CH100** | `iter-returns-self-no-next` | `__iter__` returns `self`, but the class defines no `__next__` — `iter()` succeeds, but the first `next()` call raises `TypeError`. | hardening rule — zero corpus hits |
+| **CH101** | `setter-before-property` | `@x.setter`/`@x.deleter` where `x` was never bound as a property earlier in the same class — inheriting one from a base doesn't help either — always raises `NameError`. | hardening rule — zero corpus hits |
+| **CH102** | `total-ordering-no-methods` | `@functools.total_ordering` with none of `__lt__`/`__le__`/`__gt__`/`__ge__` defined — `__eq__` alone isn't enough — always raises `ValueError` at class-decoration time. | hardening rule — zero corpus hits |
+| **CH103** | `slots-non-identifier-string` | `__slots__` assigned a bare string that isn't itself one valid identifier (e.g. `'foo bar'`, mimicking `namedtuple`'s field-string convention) — Python treats a string as one slot name, not a delimited list — always raises `TypeError`. | hardening rule — zero corpus hits |
+| **CH104** | `dataclass-field-mutable-default` | `dataclasses.field(default=[])`/`{}`/`set()` given directly instead of `default_factory` — always raises `ValueError` the moment the dataclass is defined. | hardening rule — zero corpus hits |
 
 `codehound list` prints this from the source of truth.
 
@@ -643,6 +647,16 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
       `NotImplementedError`, two `__slots__`-declaring bases colliding,
       `str.maketrans()` with mismatched-length arguments, and `__iter__`
       returning `self` with no `__next__` — CH089-CH100
+- [x] 104 checks — a `@x.setter`/`@x.deleter` where `x` was never bound
+      as a property earlier in the class (inheriting one from a base
+      doesn't help either), `@total_ordering` with none of the four
+      ordering dunders defined, `__slots__` given a non-identifier
+      string (Python treats it as one slot name, not a delimited list),
+      and `dataclasses.field(default=[])` instead of `default_factory`
+      — CH101-CH104. Also fixed a real precision gap in CH081 (slots
+      conflicting with a class variable): it only checked plain
+      assignments, missing the identical conflict a same-named method
+      or `@property` raises.
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Extend CH001 to a curated denylist of sync AI/agent SDK client calls inside async functions (vector-DB clients, LLM SDKs) — the gap flake8-async's stdlib-only denylist leaves open
 
