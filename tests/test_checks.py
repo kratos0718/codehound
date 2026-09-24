@@ -3871,6 +3871,29 @@ def test_ch090_ignores_returns_false():
     assert _run(code, ["CH090"]) == []
 
 
+def test_ch090_ignores_collect_and_defer_pattern():
+    # Real pattern from flask's _CollectErrors: the exception is captured
+    # into self.errors for a later, separate raise_any() call - not
+    # silently discarded, just deferred.
+    code = (
+        "class CollectErrors:\n"
+        "    def __init__(self):\n        self.errors = []\n"
+        "    def __exit__(self, exc_type, exc_val, exc_tb):\n"
+        "        if exc_val is not None:\n            self.errors.append(exc_val)\n"
+        "        return True\n"
+    )
+    assert _run(code, ["CH090"]) == []
+
+
+def test_ch090_ignores_exception_assigned_to_attribute():
+    code = (
+        "class CM:\n"
+        "    def __exit__(self, exc_type, exc_val, exc_tb):\n"
+        "        self.last_error = exc_val\n        return True\n"
+    )
+    assert _run(code, ["CH090"]) == []
+
+
 # --- CH091 hash-eq-field-mismatch -----------------------------------------------------------------
 
 

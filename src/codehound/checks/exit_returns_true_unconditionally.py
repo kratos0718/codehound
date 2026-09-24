@@ -49,6 +49,36 @@ def _references_name_in_compare(node: ast.AST, name: str) -> bool:
     return False
 
 
+def _is_name(node: ast.expr | None, name: str) -> bool:
+    return isinstance(node, ast.Name) and node.id == name
+
+
+def _captures_exception_value(node: ast.AST, exc_val_name: str) -> bool:
+    """The exception object is stored somewhere for later use, not just
+    silently discarded after the unconditional `return True`.
+
+    Two shapes: `<container>.append(exc_val)` and `<attr> = ...exc_val...`
+    (assigning it, or an expression containing it, into an attribute or
+    variable that outlives this call). Either is evidence of a deliberate
+    collect-and-defer-the-raise pattern (flask's `_CollectErrors.__exit__`
+    appends to `self.errors`, then a separate `raise_any()` re-raises them
+    as a group) rather than a bare swallow - the check's whole purpose is
+    to catch exceptions that go nowhere, and this is a case where the
+    exception plainly does go somewhere.
+    """
+    for n in ast.walk(node):
+        if (
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "append"
+            and any(_is_name(arg, exc_val_name) for arg in n.args)
+        ):
+            return True
+        if isinstance(n, ast.Assign) and any(_is_name(sub, exc_val_name) for sub in ast.walk(n.value)):
+            return True
+    return False
+
+
 class ExitReturnsTrueUnconditionally(Check):
     code = "CH090"
     name = "exit-returns-true-unconditionally"
@@ -72,6 +102,8 @@ class ExitReturnsTrueUnconditionally(Check):
                 if not returns or not all(_is_literal_true(r.value) for r in returns):
                     continue
                 if _references_name_in_compare(method, exc_type_param):
+                    continue
+                if len(params) >= 3 and _captures_exception_value(method, params[2].arg):
                     continue
                 findings.append(
                     Finding(

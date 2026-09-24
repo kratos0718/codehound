@@ -672,6 +672,13 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
       self-consistent by construction — there's no separate field list
       for it to fall out of sync with — and is recognized as such rather
       than flagged for "comparing nothing."
+- [x] Fixed a false positive in CH090 (`__exit__` unconditionally
+      returns `True`): flask's `_CollectErrors.__exit__` does exactly
+      that, but only after appending the exception to `self.errors` for
+      a separate `raise_any()` call to re-raise as a group later — a
+      deliberate collect-and-defer pattern, not a silent swallow. Now
+      skipped when the exception value is captured into an attribute or
+      appended to a container anywhere in the method.
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Extend CH001 to a curated denylist of sync AI/agent SDK client calls inside async functions (vector-DB clients, LLM SDKs) — the gap flake8-async's stdlib-only denylist leaves open
 
