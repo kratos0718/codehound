@@ -20,7 +20,7 @@ from __future__ import annotations
 from codehound.checks import ALL_CHECKS, get_checks
 from codehound.core import Check, Finding, scan_file, scan_files, scan_path
 
-__version__ = "1.17.1"
+__version__ = "1.17.2"
 
 __all__ = [
     "ALL_CHECKS",

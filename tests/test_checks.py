@@ -3924,6 +3924,58 @@ def test_ch091_ignores_dict_equality():
     assert _run(code, ["CH091"]) == []
 
 
+def test_ch091_ignores_abstract_eq_stub():
+    # Real pattern from redis-py's AbstractRetry: __hash__ is the concrete,
+    # inherited implementation; __eq__ is an @abstractmethod placeholder
+    # every real subclass overrides. A stub body carries no information
+    # about what a real override will compare.
+    code = (
+        "import abc\n"
+        "class AbstractRetry(abc.ABC):\n"
+        "    def __init__(self, backoff, retries):\n"
+        "        self._backoff = backoff\n        self._retries = retries\n"
+        "    @abc.abstractmethod\n"
+        "    def __eq__(self, other):\n        return NotImplemented\n"
+        "    def __hash__(self):\n        return hash((self._backoff, self._retries))\n"
+    )
+    assert _run(code, ["CH091"]) == []
+
+
+def test_ch091_ignores_raise_not_implemented_error_eq_stub():
+    code = (
+        "class Base:\n"
+        "    def __eq__(self, other):\n        raise NotImplementedError\n"
+        "    def __hash__(self):\n        return hash((self.a, self.b))\n"
+    )
+    assert _run(code, ["CH091"]) == []
+
+
+def test_ch091_ignores_hash_based_equality():
+    # Real pattern from redis-py's CacheEntry: __eq__ delegates to hash
+    # equality, so it can never disagree with __hash__ about which fields
+    # matter - there's no separate field list to fall out of sync.
+    code = (
+        "class CacheEntry:\n"
+        "    def __init__(self, a, b):\n        self.a = a\n        self.b = b\n"
+        "    def __hash__(self):\n        return hash((self.a, self.b))\n"
+        "    def __eq__(self, other):\n        return hash(self) == hash(other)\n"
+    )
+    assert _run(code, ["CH091"]) == []
+
+
+def test_ch091_flags_hash_of_a_field_not_self():
+    # Superficially similar to the hash-based-equality idiom, but this
+    # hashes a single field rather than the whole object - still a real
+    # mismatch against a __hash__ that mixes in more fields than that.
+    code = (
+        "class Sneaky:\n"
+        "    def __init__(self, a, b):\n        self.a = a\n        self.b = b\n"
+        "    def __eq__(self, other):\n        return hash(self.a) == hash(other.a)\n"
+        "    def __hash__(self):\n        return hash((self.a, self.b))\n"
+    )
+    assert len(_run(code, ["CH091"])) == 1
+
+
 # --- CH092 path-write-type-mismatch ---------------------------------------------------------------
 
 

@@ -138,12 +138,88 @@ def _property_passthroughs(cls: ast.ClassDef) -> dict[str, str]:
     return mapping
 
 
+def _decorator_names(node: ast.FunctionDef) -> set[str]:
+    names: set[str] = set()
+    for dec in node.decorator_list:
+        if isinstance(dec, ast.Name):
+            names.add(dec.id)
+        elif isinstance(dec, ast.Attribute):
+            names.add(dec.attr)
+    return names
+
+
+def _is_abstract_stub(method: ast.FunctionDef) -> bool:
+    """An `@abstractmethod` (or bare-stub) `__eq__` with no real body.
+
+    `return NotImplemented`/`raise NotImplementedError`/`pass`/`...` compare
+    nothing by design - they're a placeholder for subclasses to override,
+    not a real equality implementation with zero fields. Treating "compares
+    nothing" as "compares fewer fields than __hash__" would flag every
+    single subclass-must-override ABC method, regardless of what any actual
+    override compares (verified against redis-py's AbstractRetry: __hash__
+    is the concrete, inherited implementation; __eq__ is the abstract stub
+    every real subclass overrides with a body that *does* match __hash__'s
+    fields - this check can't see that override from here, so the right
+    call is to skip the class rather than guess from the stub alone).
+    """
+    if "abstractmethod" in _decorator_names(method):
+        return True
+    body = [s for s in method.body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant) and isinstance(s.value.value, str))]
+    if len(body) != 1:
+        return False
+    stmt = body[0]
+    if isinstance(stmt, ast.Pass):
+        return True
+    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and stmt.value.value is Ellipsis:
+        return True
+    if isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Name) and stmt.value.id == "NotImplemented":
+        return True
+    if isinstance(stmt, ast.Raise):
+        exc = stmt.exc
+        if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name) and exc.func.id == "NotImplementedError":
+            return True
+        if isinstance(exc, ast.Name) and exc.id == "NotImplementedError":
+            return True
+    return False
+
+
 def _is_reflective_call(node: ast.expr) -> bool:
     """A getattr(obj, name)/fields(obj) call - compares fields chosen at
     runtime, not by a literal name this check could extract."""
     if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
         return False
     return node.func.id in ("getattr", "fields")
+
+
+def _is_hash_based_eq(method: ast.FunctionDef, self_name: str, other_name: str) -> bool:
+    """`__eq__` defined as `return hash(self) == hash(other)`.
+
+    Unusual, but self-consistent by construction: equality *is* hash
+    equality here, so the two can never disagree about which fields
+    matter - there's no separate field list for __eq__ to omit (real
+    corpus hit: redis-py's `CacheEntry`).
+    """
+    body = [s for s in method.body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant) and isinstance(s.value.value, str))]
+    if len(body) != 1 or not isinstance(body[0], ast.Return):
+        return False
+    value = body[0].value
+    if not (isinstance(value, ast.Compare) and len(value.ops) == 1 and isinstance(value.ops[0], ast.Eq)):
+        return False
+
+    def _is_hash_call_on(node: ast.expr, name: str) -> bool:
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "hash"
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == name
+        )
+
+    left, right = value.left, value.comparators[0]
+    return (_is_hash_call_on(left, self_name) and _is_hash_call_on(right, other_name)) or (
+        _is_hash_call_on(left, other_name) and _is_hash_call_on(right, self_name)
+    )
 
 
 def _eq_body_attrs(method: ast.FunctionDef, self_name: str) -> set[str] | None:
@@ -184,7 +260,12 @@ class HashEqFieldMismatch(Check):
             eq_method = next((s for s in cls.body if isinstance(s, ast.FunctionDef) and s.name == "__eq__"), None)
             if hash_method is None or eq_method is None or not hash_method.args.args:
                 continue
+            if _is_abstract_stub(eq_method):
+                continue
             self_name = hash_method.args.args[0].arg
+            if eq_method.args.args and len(eq_method.args.args) > 1:
+                if _is_hash_based_eq(eq_method, eq_method.args.args[0].arg, eq_method.args.args[1].arg):
+                    continue
             properties = _property_names(cls)
             hash_attrs = _hash_body_attrs(hash_method, self_name, properties)
             if not hash_attrs:

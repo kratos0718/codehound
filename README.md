@@ -663,6 +663,15 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
       `closer()` later — the exact pattern in CPython's vendored
       `lib2to3.pgen2.ParserGenerator.__init__`, found while scanning
       `black`'s copy of it.
+- [x] Fixed two false positives in CH091 (hash/eq field mismatch), both
+      found scanning `redis-py`: an `__eq__` that's an `@abstractmethod`
+      stub (`AbstractRetry`) carries no information about what a real
+      subclass override will compare, so it's skipped now instead of
+      being treated as "compares zero fields"; an `__eq__` defined as
+      `return hash(self) == hash(other)` (`CacheEntry`) is
+      self-consistent by construction — there's no separate field list
+      for it to fall out of sync with — and is recognized as such rather
+      than flagged for "comparing nothing."
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Extend CH001 to a curated denylist of sync AI/agent SDK client calls inside async functions (vector-DB clients, LLM SDKs) — the gap flake8-async's stdlib-only denylist leaves open
 
