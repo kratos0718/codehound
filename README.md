@@ -679,6 +679,12 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
       deliberate collect-and-defer pattern, not a silent swallow. Now
       skipped when the exception value is captured into an attribute or
       appended to a container anywhere in the method.
+- [x] Fixed a false positive in CH081 (slots conflicting with a class
+      variable): `'__dict__'` and `'__weakref__'` in `__slots__` don't
+      create normal slot descriptors - they just re-enable an instance
+      dict / weakref support - so a same-named class attribute or
+      property never conflicts. Found via celery's `Proxy`, which defines
+      a `__dict__` property alongside `'__dict__'` in its `__slots__`.
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Extend CH001 to a curated denylist of sync AI/agent SDK client calls inside async functions (vector-DB clients, LLM SDKs) — the gap flake8-async's stdlib-only denylist leaves open
 

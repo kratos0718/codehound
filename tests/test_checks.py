@@ -3619,6 +3619,28 @@ def test_ch081_flags_slot_name_with_property():
     assert findings[0].code == "CH081"
 
 
+def test_ch081_ignores_dict_slot_with_dict_property():
+    # Real pattern from celery's `Proxy`: '__dict__' in __slots__ only
+    # re-enables an instance dict, so a same-named property never conflicts.
+    code = (
+        "class Proxy:\n"
+        "    __slots__ = ('_local', '__dict__')\n"
+        "    @property\n"
+        "    def __dict__(self):\n        return {}\n"
+    )
+    assert _run(code, ["CH081"]) == []
+
+
+def test_ch081_ignores_weakref_slot_with_class_attribute():
+    code = "class Foo:\n    __slots__ = ('__weakref__',)\n    __weakref__ = None\n"
+    assert _run(code, ["CH081"]) == []
+
+
+def test_ch081_still_flags_normal_slot_next_to_special_slots():
+    code = "class Foo:\n    __slots__ = ('__dict__', 'x')\n    x = 5\n"
+    assert len(_run(code, ["CH081"])) == 1
+
+
 # --- CH082 python2-removed-dunder ---------------------------------------------------------------
 
 

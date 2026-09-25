@@ -54,6 +54,13 @@ def _slot_names(value: ast.expr) -> list[str]:
     return []
 
 
+# Listing these in __slots__ doesn't create a normal slot descriptor - it just
+# re-enables an instance dict / weakref support - so a same-named class
+# attribute or property never conflicts (celery's `Proxy` defines a
+# `__dict__` property alongside `'__dict__'` in its __slots__).
+_SPECIAL_SLOTS = frozenset({"__dict__", "__weakref__"})
+
+
 def _has_custom_metaclass(cls: ast.ClassDef) -> bool:
     for kw in cls.keywords:
         if kw.arg == "metaclass":
@@ -82,6 +89,7 @@ class SlotsConflictsClassVariable(Check):
                     and stmt.targets[0].id == "__slots__"
                 ):
                     slots.update(_slot_names(stmt.value))
+            slots -= _SPECIAL_SLOTS
             if not slots:
                 continue
             for stmt in cls.body:
