@@ -68,6 +68,16 @@ def _is_wraps_decorator(dec: ast.expr) -> bool:
     return False
 
 
+def _decorator_call_receives(dec: ast.expr, wrapped: str) -> bool:
+    """`@helper(func)` on the inner wrapper - the `wraps(func)` shape under
+    another name. trio's `@_wraps_async(fn)` calls `update_wrapper(wrapper,
+    fn)` itself; a decorator factory handed the wrapped callable is there to
+    copy its identity onto the wrapper."""
+    return isinstance(dec, ast.Call) and any(
+        isinstance(a, ast.Name) and a.id == wrapped for a in dec.args
+    )
+
+
 def _iter_own_scope(node: ast.AST):
     """Yield every descendant of `node` except ones inside a nested
     function/lambda/class - so a call buried in a further-nested inner
@@ -178,6 +188,8 @@ class DecoratorMissingFunctoolsWraps(Check):
             if not _is_returned(outer, inner.name):
                 continue
             if any(_is_wraps_decorator(d) for d in inner.decorator_list):
+                continue
+            if any(_decorator_call_receives(d, wrapped_param) for d in inner.decorator_list):
                 continue
             if _has_manual_identity_preservation(outer, inner.name):
                 continue

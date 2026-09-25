@@ -717,6 +717,11 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
       `{0[key]}` only read into it. Format strings are resolved from a
       literal or a module-level constant, and skipped when unresolvable.
       Found via five celery/kombu `__repr__`s like `R_WORKER.format(self)`.
+- [x] Fixed a false positive in CH085 (decorator missing
+      `functools.wraps`): a decorator *call* on the inner wrapper that is
+      handed the wrapped callable (`@_wraps_async(fn)`) is the `wraps(fn)`
+      contract under another name - trio's Path wrappers use exactly this,
+      calling `update_wrapper()` inside the helper.
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Extend CH001 to a curated denylist of sync AI/agent SDK client calls inside async functions (vector-DB clients, LLM SDKs) — the gap flake8-async's stdlib-only denylist leaves open
 

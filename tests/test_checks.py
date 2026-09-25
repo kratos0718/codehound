@@ -3888,6 +3888,30 @@ def test_ch085_ignores_non_first_param_call():
     assert _run(code, ["CH085"]) == []
 
 
+def test_ch085_ignores_custom_wraps_equivalent_decorator():
+    # Real pattern from trio's Path wrappers: `@_wraps_async(fn)` is handed
+    # the wrapped callable and calls update_wrapper() itself.
+    code = (
+        "def _wrap_method(fn):\n"
+        "    @_wraps_async(fn)\n"
+        "    def wrapper(self, *args, **kwargs):\n"
+        "        return fn(self, *args, **kwargs)\n"
+        "    return wrapper\n"
+    )
+    assert _run(code, ["CH085"]) == []
+
+
+def test_ch085_still_flags_decorator_not_given_the_wrapped_callable():
+    code = (
+        "def deco(fn):\n"
+        "    @log_calls('x')\n"
+        "    def wrapper(*args, **kwargs):\n"
+        "        return fn(*args, **kwargs)\n"
+        "    return wrapper\n"
+    )
+    assert len(_run(code, ["CH085"])) == 1
+
+
 # --- CH086 deepcopy-self-with-lock ---------------------------------------------------------------
 
 
