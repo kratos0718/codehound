@@ -305,6 +305,28 @@ def test_ch007_ignores_name_shadowed_by_parameter():
     assert _run(code, ["CH007"]) == []
 
 
+def test_ch007_ignores_async_method_behind_scheduling_decorator():
+    # Real pattern from textual: `@work` makes calling the async method
+    # schedule a Worker and return it, so a bare call is correct.
+    code = (
+        "class Tree:\n"
+        "    @work(exclusive=True)\n"
+        "    async def _loader(self):\n        ...\n"
+        "    def reload(self):\n        self._loader()\n"
+    )
+    assert _run(code, ["CH007"]) == []
+
+
+def test_ch007_still_flags_async_staticmethod_called_bare():
+    code = (
+        "class Tree:\n"
+        "    @staticmethod\n"
+        "    async def _loader():\n        ...\n"
+        "    def reload(self):\n        self._loader()\n"
+    )
+    assert len(_run(code, ["CH007"])) == 1
+
+
 # --- CH008 asyncio-run-in-running-loop ---------------------------------------------
 
 

@@ -36,6 +36,25 @@ import ast
 
 from codehound.core import Check, Finding, enclosing_class, enclosing_function
 
+# Decorators known to leave "calling this returns a coroutine" intact. Any
+# other decorator can replace the call's return value entirely - textual's
+# `@work` turns an async method into a sync call that schedules a Worker, so
+# a bare `self._loader()` there is correct - so an async def carrying one is
+# skipped rather than guessed at.
+_TRANSPARENT_DECORATORS = frozenset(
+    {"staticmethod", "classmethod", "abstractmethod", "override", "final", "wraps"}
+)
+
+
+def _decorator_name(dec: ast.expr) -> str | None:
+    if isinstance(dec, ast.Call):
+        dec = dec.func
+    if isinstance(dec, ast.Name):
+        return dec.id
+    if isinstance(dec, ast.Attribute):
+        return dec.attr
+    return None
+
 
 class UnawaitedCoroutineCall(Check):
     code = "CH007"
@@ -48,6 +67,8 @@ class UnawaitedCoroutineCall(Check):
 
         for node in ast.walk(tree):
             if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+            if not all(_decorator_name(d) in _TRANSPARENT_DECORATORS for d in node.decorator_list):
                 continue
             parent = parents.get(id(node))
             if isinstance(parent, ast.Module):

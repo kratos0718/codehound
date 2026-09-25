@@ -685,6 +685,13 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
       dict / weakref support - so a same-named class attribute or
       property never conflicts. Found via celery's `Proxy`, which defines
       a `__dict__` property alongside `'__dict__'` in its `__slots__`.
+- [x] Fixed a false positive in CH007 (unawaited coroutine): a decorator
+      can replace what calling an `async def` returns - textual's `@work`
+      turns an async method into a sync call that schedules a Worker -
+      so an async def is now only treated as a plain coroutine function
+      when every decorator on it is known not to change that
+      (`staticmethod`, `classmethod`, `abstractmethod`, `override`,
+      `final`, `wraps`).
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Extend CH001 to a curated denylist of sync AI/agent SDK client calls inside async functions (vector-DB clients, LLM SDKs) — the gap flake8-async's stdlib-only denylist leaves open
 
