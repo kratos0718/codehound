@@ -706,6 +706,11 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
       correct spelling when the success path deliberately hands the held
       lock to the caller for a later release - urllib3's HTTP/2 probe cache
       (`acquire_and_get` / `set_and_release`) does exactly this.
+- [x] Fixed a false positive in CH062 (`@total_ordering` without
+      `__eq__`): when an ordering method compares `id(...)` values, the
+      ordering is identity-based on purpose and the default identity
+      `__eq__` is exactly consistent with it - kombu's timer `Entry` orders
+      by `id(self) < id(other)` specifically to avoid ordering by hash.
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Extend CH001 to a curated denylist of sync AI/agent SDK client calls inside async functions (vector-DB clients, LLM SDKs) — the gap flake8-async's stdlib-only denylist leaves open
 

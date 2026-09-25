@@ -3192,6 +3192,30 @@ def test_ch062_ignores_undecorated_class():
     assert _run(code, ["CH062"]) == []
 
 
+def test_ch062_ignores_identity_based_ordering():
+    # Real pattern from kombu's timer Entry: ordering is by id() on purpose,
+    # so the default identity __eq__ is consistent with it.
+    code = (
+        "from functools import total_ordering\n"
+        "@total_ordering\n"
+        "class Entry:\n"
+        "    def __lt__(self, other):\n"
+        "        return id(self) < id(other)\n"
+    )
+    assert _run(code, ["CH062"]) == []
+
+
+def test_ch062_still_flags_value_based_ordering_without_eq():
+    code = (
+        "from functools import total_ordering\n"
+        "@total_ordering\n"
+        "class Money:\n"
+        "    def __lt__(self, other):\n"
+        "        return self.amount < other.amount\n"
+    )
+    assert len(_run(code, ["CH062"])) == 1
+
+
 # --- CH063 unbounded-cycle-consumption ------------------------------------------------------
 
 

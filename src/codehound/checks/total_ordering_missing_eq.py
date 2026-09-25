@@ -36,6 +36,30 @@ def _defines_eq(cls: ast.ClassDef) -> bool:
     return any(isinstance(stmt, ast.FunctionDef) and stmt.name == "__eq__" for stmt in cls.body)
 
 
+_ORDERING_METHODS = {"__lt__", "__le__", "__gt__", "__ge__"}
+
+
+def _orders_by_identity(cls: ast.ClassDef) -> bool:
+    """An ordering method comparing `id(...)` values.
+
+    If ordering is identity-based on purpose, the default identity `__eq__`
+    is exactly consistent with it - kombu's timer `Entry.__lt__` is
+    `id(self) < id(other)` ("must not use hash() to order entries").
+    """
+    for stmt in cls.body:
+        if not isinstance(stmt, ast.FunctionDef) or stmt.name not in _ORDERING_METHODS:
+            continue
+        for node in ast.walk(stmt):
+            if isinstance(node, ast.Compare):
+                operands = [node.left, *node.comparators]
+                if all(
+                    isinstance(o, ast.Call) and isinstance(o.func, ast.Name) and o.func.id == "id"
+                    for o in operands
+                ):
+                    return True
+    return False
+
+
 def _has_custom_base(cls: ast.ClassDef) -> bool:
     return not (not cls.bases or (len(cls.bases) == 1 and isinstance(cls.bases[0], ast.Name) and cls.bases[0].id == "object"))
 
@@ -56,6 +80,8 @@ class TotalOrderingMissingEq(Check):
             if _has_custom_base(cls):
                 continue  # a base class may already provide a correct __eq__
             if _defines_eq(cls):
+                continue
+            if _orders_by_identity(cls):
                 continue
             findings.append(
                 Finding(
