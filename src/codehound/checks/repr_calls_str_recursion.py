@@ -27,6 +27,8 @@ f-string embedding `self` directly (`f"{self}"`), or `"{}".format(self)`.
 from __future__ import annotations
 
 import ast
+import re
+import string
 
 from codehound.core import Check, Finding
 
@@ -35,14 +37,71 @@ def _is_self_name(node: ast.expr, self_name: str) -> bool:
     return isinstance(node, ast.Name) and node.id == self_name
 
 
-def _references_self_via_str(node: ast.AST, self_name: str) -> bool:
+def _module_string_constants(tree: ast.AST) -> dict[str, str]:
+    consts: dict[str, str] = {}
+    body = tree.body if isinstance(tree, ast.Module) else []
+    for stmt in body:
+        if (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and isinstance(stmt.value, ast.Constant)
+            and isinstance(stmt.value.value, str)
+        ):
+            consts[stmt.targets[0].id] = stmt.value.value
+    return consts
+
+
+def _format_renders_self_bare(call: ast.Call, self_name: str, consts: dict[str, str]) -> bool:
+    """`fmt.format(..., self, ...)` recurses only if a field renders `self` bare.
+
+    `{0}`, `{}`, `{0!r}`, `{0!s}` all end up in str()/repr() of self;
+    `{0.hostname}` / `{0[key]}` only read into it (celery's `Worker.__repr__`
+    is `R_WORKER.format(self)` with `R_WORKER = '<Worker: {0.hostname} ...>'`).
+    An unresolvable format string is skipped rather than guessed at.
+    """
+    receiver = call.func.value  # type: ignore[union-attr]
+    if isinstance(receiver, ast.Constant) and isinstance(receiver.value, str):
+        fmt = receiver.value
+    elif isinstance(receiver, ast.Name) and receiver.id in consts:
+        fmt = consts[receiver.id]
+    else:
+        return False
+    self_positions = {i for i, a in enumerate(call.args) if _is_self_name(a, self_name)}
+    self_keywords = {kw.arg for kw in call.keywords if kw.arg and _is_self_name(kw.value, self_name)}
+    if not self_positions and not self_keywords:
+        return False
+    try:
+        fields = list(string.Formatter().parse(fmt))
+    except ValueError:
+        return False
+    auto_index = 0
+    for _literal, field_name, _spec, _conversion in fields:
+        if field_name is None:
+            continue
+        first = re.split(r"[.\[]", field_name, maxsplit=1)[0]
+        bare = field_name == first
+        if first == "":
+            ref: int | str = auto_index
+            auto_index += 1
+        elif first.isdigit():
+            ref = int(first)
+        else:
+            ref = first
+        refers_to_self = ref in self_positions if isinstance(ref, int) else ref in self_keywords
+        if refers_to_self and bare:
+            return True
+    return False
+
+
+def _references_self_via_str(node: ast.AST, self_name: str, consts: dict[str, str]) -> bool:
     if isinstance(node, ast.Call):
         func = node.func
         if isinstance(func, ast.Name) and func.id == "str" and len(node.args) == 1:
             if _is_self_name(node.args[0], self_name):
                 return True
         if isinstance(func, ast.Attribute) and func.attr == "format":
-            if node.args and any(_is_self_name(a, self_name) for a in node.args):
+            if _format_renders_self_bare(node, self_name, consts):
                 return True
     if isinstance(node, ast.JoinedStr):
         for value in node.values:
@@ -68,6 +127,7 @@ class ReprCallsStrRecursion(Check):
 
     def run(self, tree: ast.AST, parents: dict, path: str) -> list[Finding]:
         findings: list[Finding] = []
+        consts = _module_string_constants(tree)
         for cls in ast.walk(tree):
             if not isinstance(cls, ast.ClassDef):
                 continue
@@ -87,7 +147,7 @@ class ReprCallsStrRecursion(Check):
                 continue
             self_name = repr_method.args.args[0].arg
             hit = next(
-                (n for n in ast.walk(repr_method) if n is not repr_method and _references_self_via_str(n, self_name)),
+                (n for n in ast.walk(repr_method) if n is not repr_method and _references_self_via_str(n, self_name, consts)),
                 None,
             )
             if hit is None:

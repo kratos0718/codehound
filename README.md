@@ -711,6 +711,12 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
       ordering is identity-based on purpose and the default identity
       `__eq__` is exactly consistent with it - kombu's timer `Entry` orders
       by `id(self) < id(other)` specifically to avoid ordering by hash.
+- [x] Fixed a false positive in CH075 (`__repr__` recursing through
+      `str(self)`): `fmt.format(self)` now only flags when a replacement
+      field renders `self` bare (`{0}`, `{}`, `{0!r}`); `{0.hostname}` /
+      `{0[key]}` only read into it. Format strings are resolved from a
+      literal or a module-level constant, and skipped when unresolvable.
+      Found via five celery/kombu `__repr__`s like `R_WORKER.format(self)`.
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Extend CH001 to a curated denylist of sync AI/agent SDK client calls inside async functions (vector-DB clients, LLM SDKs) — the gap flake8-async's stdlib-only denylist leaves open
 

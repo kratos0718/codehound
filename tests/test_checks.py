@@ -3510,6 +3510,36 @@ def test_ch075_ignores_class_with_base():
     assert _run(code, ["CH075"]) == []
 
 
+def test_ch075_ignores_format_reading_attributes_of_self():
+    # Real pattern from celery's events.state.Worker: `{0.attr}` fields only
+    # read into self, they never call str(self).
+    code = (
+        "R_WORKER = '<Worker: {0.hostname} ({0.status_string})>'\n"
+        "class Worker:\n"
+        "    def __repr__(self):\n"
+        "        return R_WORKER.format(self)\n"
+    )
+    assert _run(code, ["CH075"]) == []
+
+
+def test_ch075_flags_format_rendering_self_bare():
+    code = (
+        "class Foo:\n"
+        "    def __repr__(self):\n"
+        "        return '<Foo {0} {1}>'.format(self, 1)\n"
+    )
+    assert len(_run(code, ["CH075"])) == 1
+
+
+def test_ch075_flags_auto_numbered_field_landing_on_self():
+    code = (
+        "class Foo:\n"
+        "    def __repr__(self):\n"
+        "        return '<{} of {}>'.format('x', self)\n"
+    )
+    assert len(_run(code, ["CH075"])) == 1
+
+
 # --- CH076 duplicate-method-definition ---------------------------------------------------------
 
 
