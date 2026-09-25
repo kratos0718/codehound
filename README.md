@@ -692,6 +692,14 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
       when every decorator on it is known not to change that
       (`staticmethod`, `classmethod`, `abstractmethod`, `override`,
       `final`, `wraps`).
+- [x] Narrowed CH052 (forwarded without unpacking): the starred
+      companion argument now has to be the enclosing function's *own*
+      other variadic (the real `func(*args, kwargs)` wrapper typo), not an
+      unrelated starred local - celery's `apply_async((id, body), kwargs,
+      **routing_options)` passes `kwargs` positionally on purpose.
+      Documented a known limitation alongside it: `super().__init__(args,
+      **kwargs)` feeding click's `param_decls` is syntactically identical
+      to the typo and still flags; only the callee's signature can tell.
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Extend CH001 to a curated denylist of sync AI/agent SDK client calls inside async functions (vector-DB clients, LLM SDKs) — the gap flake8-async's stdlib-only denylist leaves open
 

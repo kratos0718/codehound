@@ -30,6 +30,21 @@ additional keyword overrides - `dict`'s own constructor (and `.update()`)
 is explicitly designed to accept a mapping as its first positional
 argument, unlike an arbitrary user function, so a bare `kwargs` there is
 never a dropped star.
+
+The starred companion has to be the enclosing function's *own* other
+variadic - a wrapper forwarding its own pair with one star dropped. Found
+scanning celery: `apply_async((id, body), kwargs, **routing_options)`
+inside a function that only declares `**kwargs` passes `kwargs` bare on
+purpose (celery's `apply_async` takes the kwargs dict positionally), and
+the starred argument there is an unrelated local dict, not a forwarded
+`*args`.
+
+Known, unfixable-from-here limitation: `super().__init__(args, **kwargs)`
+feeding click's `Option(param_decls, ...)`, or `self.apply_async(args,
+**options)`, is syntactically identical to the dropped-star typo - whether
+it's a bug depends entirely on whether the callee wants a sequence as one
+argument, which a single-file check can't see. Both still flag; both are
+correct in celery.
 """
 
 from __future__ import annotations
@@ -79,10 +94,18 @@ class ForwardedWithoutUnpacking(Check):
             star_name, kwarg_name = _variadic_param_names(func)
             if star_name is None and kwarg_name is None:
                 continue
+            own_star_forwarded = any(
+                isinstance(a, ast.Starred) and isinstance(a.value, ast.Name) and a.value.id == star_name
+                for a in call.args
+            )
+            own_kwarg_forwarded = any(
+                kw.arg is None and isinstance(kw.value, ast.Name) and kw.value.id == kwarg_name
+                for kw in call.keywords
+            )
             for arg in call.args:
                 if not isinstance(arg, ast.Name):
                     continue
-                if arg.id == star_name:
+                if arg.id == star_name and own_kwarg_forwarded:
                     findings.append(
                         Finding(
                             path=path,
@@ -97,7 +120,7 @@ class ForwardedWithoutUnpacking(Check):
                             ),
                         )
                     )
-                elif arg.id == kwarg_name:
+                elif arg.id == kwarg_name and own_star_forwarded:
                     findings.append(
                         Finding(
                             path=path,

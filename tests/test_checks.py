@@ -2807,6 +2807,18 @@ def test_ch052_ignores_dict_merge_idiom():
     assert _run(code, ["CH052"]) == []
 
 
+def test_ch052_ignores_bare_kwargs_next_to_unrelated_starred_local():
+    # Real pattern from celery: apply_async takes the kwargs dict
+    # positionally, and the starred argument is an unrelated local, not a
+    # forwarded *args - no evidence this is a wrapper with a dropped star.
+    code = (
+        "def fallback(header, body, **kwargs):\n"
+        "    opts = {}\n"
+        "    task.apply_async((header, body), kwargs, **opts)\n"
+    )
+    assert _run(code, ["CH052"]) == []
+
+
 # --- CH053 aliased-list-multiplication ------------------------------------------------------
 
 
