@@ -911,6 +911,35 @@ def test_ch014_ignores_acquire_with_no_release_at_all():
     assert _run(code, ["CH014"]) == []
 
 
+def test_ch014_ignores_release_in_reraising_baseexception_handler():
+    # Real pattern from urllib3's HTTP/2 probe cache: the lock is deliberately
+    # handed to the caller on success and released later elsewhere; every
+    # failure path releases and re-raises.
+    code = (
+        "def acquire_and_get(key_lock, values, key):\n"
+        "    key_lock.acquire()\n"
+        "    try:\n"
+        "        value = values[key]\n"
+        "    except BaseException:\n"
+        "        key_lock.release()\n"
+        "        raise\n"
+        "    return value\n"
+    )
+    assert _run(code, ["CH014"]) == []
+
+
+def test_ch014_still_flags_release_in_narrow_handler_that_swallows():
+    code = (
+        "def f(lock):\n"
+        "    lock.acquire()\n"
+        "    try:\n"
+        "        work()\n"
+        "    except ValueError:\n"
+        "        lock.release()\n"
+    )
+    assert len(_run(code, ["CH014"])) == 1
+
+
 # --- CH015 async-property -------------------------------------------------------------
 
 

@@ -700,6 +700,12 @@ Every check has paired tests: the buggy pattern *is* flagged, and the idiomatic 
       Documented a known limitation alongside it: `super().__init__(args,
       **kwargs)` feeding click's `param_decls` is syntactically identical
       to the typo and still flags; only the callee's signature can tell.
+- [x] Fixed a false positive in CH014 (unprotected lock acquire): a
+      release inside `except BaseException:`/bare `except:` that re-raises
+      covers every failure path the way `finally:` would, and is the only
+      correct spelling when the success path deliberately hands the held
+      lock to the caller for a later release - urllib3's HTTP/2 probe cache
+      (`acquire_and_get` / `set_and_release`) does exactly this.
 - [ ] Cross-module resolution for CH007/CH009 (currently same-file only)
 - [ ] Extend CH001 to a curated denylist of sync AI/agent SDK client calls inside async functions (vector-DB clients, LLM SDKs) — the gap flake8-async's stdlib-only denylist leaves open
 

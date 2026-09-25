@@ -69,7 +69,7 @@ class UnprotectedLockAcquire(Check):
                 rel_call = _call_from_maybe_await(stmt) if isinstance(n, ast.Expr) else None
                 if rel_call is not None and _lock_receiver_name(rel_call, "release") == name:
                     has_release = True
-                    if self._inside_finally(n, parents):
+                    if self._inside_finally(n, parents) or self._inside_reraising_catchall(n, parents):
                         has_guarded_release = True
 
             if not has_release or has_guarded_release:
@@ -90,6 +90,32 @@ class UnprotectedLockAcquire(Check):
                 )
             )
         return findings
+
+    @staticmethod
+    def _inside_reraising_catchall(node: ast.AST, parents: dict) -> bool:
+        """Release inside `except BaseException:`/bare `except:` that re-raises.
+
+        Covers every failure path the way `finally:` would, and is the only
+        correct spelling when the success path deliberately returns with the
+        lock still held for a later, separate release (urllib3's HTTP/2
+        probe cache: `acquire_and_get` hands the lock to its caller,
+        `set_and_release` releases it).
+        """
+        cur = node
+        while cur is not None:
+            p = parents.get(id(cur))
+            if p is None or isinstance(p, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return False
+            if isinstance(p, ast.ExceptHandler):
+                t = p.type
+                catches_all = t is None or (
+                    (isinstance(t, ast.Name) and t.id == "BaseException")
+                    or (isinstance(t, ast.Attribute) and t.attr == "BaseException")
+                )
+                reraises = any(isinstance(s, ast.Raise) for s in ast.walk(p))
+                return catches_all and reraises
+            cur = p
+        return False
 
     @staticmethod
     def _inside_finally(node: ast.AST, parents: dict) -> bool:
