@@ -8,7 +8,7 @@ from codehound.core import build_parents
 from codehound.fixes import fix_source
 
 
-def _fix(code: str) -> tuple[str, int]:
+def _fix(code: str) -> tuple[str, int]: 
     tree = ast.parse(code)
     parents = build_parents(tree)
     return fix_source(code, tree, parents)
