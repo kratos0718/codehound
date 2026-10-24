@@ -8,7 +8,7 @@ hardening rules verified through real false positives against a
 ~29-framework validation corpus instead of a found-and-merged bug - see
 "Notes on precision" below for why, and what that absence itself says.
 CH026, CH029, CH034, CH036, CH038, CH045, CH046, CH047, CH051, CH058,
-CH067, CH068, CH076, CH077, CH084, CH085, and CH091 are partial
+CH067, CH068, CH076, CH077, CH084, CH085, and CH091 are partial 
 exceptions: each found real, previously-unreported bugs on their first
 (or, for CH051/CH058/CH069/CH079/CH085/CH091, a later narrowed) scan,
 but not all of them have a PR yet - see "Real bugs found, not yet filed"
