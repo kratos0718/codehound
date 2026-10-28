@@ -6,7 +6,7 @@ check that each format serializes a Finding correctly.
 
 from __future__ import annotations
 
-from codehound.checks import ALL_CHECKS
+from codehound.checks import ALL_CHECKS 
 from codehound.core import Finding
 from codehound.sarif import to_sarif
 from codehound.terminal import format_finding_text, format_summary
