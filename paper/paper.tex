@@ -28,7 +28,7 @@ abhinaaavvv07187@gmail.com}
 \maketitle
 
 \begin{abstract}
-Modern AI and machine-learning systems are overwhelmingly implemented in Python and depend heavily on the \texttt{asyncio} event loop for high-throughput model serving, agent orchestration, and tool execution. Asynchronous Python, however, is susceptible to a family of subtle, hard-to-debug defects---synchronous calls that block the event loop, fire-and-forget tasks that may be garbage-collected before completion, leaked file descriptors, mutable default arguments, and deprecated event-loop APIs---that routinely pass unit tests and code review while degrading reliability in production. We present \textbf{codehound}, a zero-dependency, AST-based static analyzer ($\approx$750 LOC, standard-library \texttt{ast} only) that detects six such defect classes, and we apply it in a systematic empirical study across \textbf{29 widely-used open-source Python AI/ML frameworks} (combined $>$1.28 million GitHub stars, 6.4 million lines of Python). We identify \textbf{1{,}377 defect instances} in 24 of the 29 frameworks, dominated by mutable default arguments (53.9\%), deprecated event-loop usage (20.8\%), and fire-and-forget tasks (19.0\%), with rarer but higher-severity event-loop-blocking calls clustered in HTTP serving routes and agent loops. Crucially, we \emph{validate} a sample of detections by submitting upstream fixes: five pull requests were merged by maintainers (into vLLM-, HuggingFace-, agno-, and mem0-class projects), providing real-world ground truth that these are genuine, accepted defects rather than stylistic preferences---and we analyze the false positives (e.g., \texttt{get\_event\_loop()} invoked inside an already-running loop) that a precise detector must avoid. Our results indicate that async-safety and resource-management anti-patterns are prevalent even in mature, heavily-used AI infrastructure, and that lightweight AST analysis surfaces them at high practical precision.
+Modern AI and machine-learning systems are overwhelmingly implemented in Python and depend heavily on the \texttt{asyncio} event loop for high-throughput model serving, agent orchestration, and tool execution. Asynchronous Python, however, is susceptible to a family of subtle, hard-to-debug defects---synchronous calls that block the event loop, fire-and-forget tasks that may be garbage-collected before completion, leaked file descriptors, mutable default arguments, and deprecated event-loop APIs---that routinely pass unit tests and code review while degrading reliability in production. We present \textbf{codehound}, a zero-dependency, AST-based static analyzer ($\approx$750 LOC, standard-library \texttt{ast} only) that detects six such defect classes, and we apply it in a systematic empirical study across \textbf{29 widely-used open-source Python AI/ML frameworks} (combined $>$1.28 million GitHub stars, 6.4 million lines of Python). We identify \textbf{1{,}377 defect instances} in 24 of the 29 frameworks, dominated by mutable default arguments (53.9\%), deprecated event-loop usage (20.8\%), and fire-and-forget tasks (19.0\%), with rarer but higher-severity event-loop-blocking calls clustered in HTTP serving routes and agent loops. Crucially, we \emph{validate} detections by submitting upstream fixes: of the 12 fixes that maintainers reviewed, 11 were confirmed as genuine defects (9 merged into unsloth, agno, mem0, pydantic-ai, Black, Xorbits Inference and the Weaviate client, and 2 fixed by maintainers in broader patches), providing real-world ground truth that these are accepted defects rather than stylistic preferences---and we analyze the false positives (e.g., \texttt{get\_event\_loop()} invoked inside an already-running loop) that a precise detector must avoid. Our results indicate that async-safety and resource-management anti-patterns are prevalent even in mature, heavily-used AI infrastructure, and that lightweight AST analysis surfaces them at high practical precision.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -94,10 +94,10 @@ CH005 & Unclosed file handle & 10 & 0.7\% \\
 \end{tabular}
 \end{table}
 
-\textbf{RQ3 (Validation).} We submitted a sample of detections upstream (Table~\ref{tab:validation}). Five fixes were \textbf{merged by maintainers}, confirming the flagged patterns as genuine, accepted defects in heavily-used projects; eleven remain under review.
+\textbf{RQ3 (Validation).} We submitted 14 detections from the corpus upstream (Table~\ref{tab:validation}, status as of November 2026). Five were \textbf{merged by maintainers}; for litellm, maintainers confirmed the defect and fixed it in a broader patch that also completes writes cancelled at loop shutdown; one (OpenAI Agents) was declined as not a defect (RQ4); two were closed for inactivity without review; five remain open. Applying codehound beyond the corpus produced four more merged fixes (Xorbits Inference, the Weaviate Python client, pydantic-ai and Black) and one more defect that maintainers fixed in a consolidated patch (Future AGI). Across all reviewed submissions, 11 of 12 were confirmed as genuine defects.
 
 \begin{table}[t]
-\caption{Validation outcomes (real upstream pull requests).}
+\caption{Validation outcomes of real upstream pull requests (November 2026). Confirmed: defect acknowledged and fixed by maintainers in their own patch. Declined: judged not a defect. Closed: closed for inactivity without review.}
 \label{tab:validation}
 \centering
 \footnotesize
@@ -105,26 +105,33 @@ CH005 & Unclosed file handle & 10 & 0.7\% \\
 \toprule
 Repo & Class & PR & Outcome \\
 \midrule
+\multicolumn{4}{l}{\emph{Corpus projects}} \\
 unsloth & CH001 & \#6135 & \textbf{Merged} \\
 agno & CH001 & \#8158 & \textbf{Merged} \\
 agno & CH001 & \#8186 & \textbf{Merged} \\
 agno & CH005 & \#8161 & \textbf{Merged} \\
 mem0 & CH002 & \#5302 & \textbf{Merged} \\
-vLLM & CH006 & \#45249 & Under review \\
-autogen & CH006 & \#7825 & Under review \\
-sglang & CH001 & \#28029 & Under review \\
-jina & CH001 & \#6243 & Under review \\
-khoj & CH001 & \#1342 & Under review \\
-OpenAI Agents & CH006 & \#3553 & Under review \\
-litellm & CH006 & \#29417 & Under review \\
-ragas & CH004 & \#2757 & Under review \\
-agno & CH006/4 & \#8183 & Under review \\
-Future AGI & CH006 & \#821 & Under review \\
+litellm & CH006 & \#29417 & Confirmed \\
+OpenAI Agents & CH006 & \#3553 & Declined \\
+vLLM & CH006 & \#45249 & Closed \\
+sglang & CH001 & \#28029 & Closed \\
+autogen & CH006 & \#7825 & Open \\
+jina & CH001 & \#6243 & Open \\
+khoj & CH001 & \#1342 & Open \\
+ragas & CH004 & \#2757 & Open \\
+agno & CH006/4 & \#8183 & Open \\
+\midrule
+\multicolumn{4}{l}{\emph{Beyond the corpus}} \\
+Xorbits Inference & CH001 & \#5055 & \textbf{Merged} \\
+Weaviate client & CH001 & \#2104 & \textbf{Merged} \\
+pydantic-ai & CH002 & \#6189 & \textbf{Merged} \\
+Black & CH005 & \#5432 & \textbf{Merged} \\
+Future AGI & CH006 & \#821 & Confirmed \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\textbf{RQ4 (False positives).} Honest precision analysis requires the rejected/not-submitted cases. (i)~\texttt{get\_event\_loop()} inside a running loop (dspy~\#9907, rejected): valid there and emits no warning---a genuine false positive motivating context-sensitivity for CH004. (ii)~Intentionally-suppressed blocking calls (langflow, \texttt{\# noqa: ASYNC251}): a knowingly-accepted-risk category. (iii)~Non-mutated mutable defaults (chroma): latent rather than active. (iv)~Deliberate fire-and-forget utilities (camel): by design. Raw counts thus mix active bugs, latent footguns, and accepted risks; the merged PRs (RQ3) anchor the active-bug end.
+\textbf{RQ4 (False positives).} Honest precision analysis requires the rejected/not-submitted cases. (i)~\texttt{get\_event\_loop()} inside a running loop (dspy~\#9907, rejected): valid there and emits no warning---a genuine false positive motivating context-sensitivity for CH004. (ii)~Intentionally-suppressed blocking calls (langflow, \texttt{\# noqa: ASYNC251}): a knowingly-accepted-risk category. (iii)~Non-mutated mutable defaults (chroma): latent rather than active. (iv)~Deliberate fire-and-forget utilities (camel): by design. (v)~A discarded task on a path that cannot suspend (OpenAI Agents~\#3553): the task only puts onto an unbounded \texttt{asyncio.Queue}, so maintainers judged the strong reference unnecessary---a CH006 false positive that motivates checking what the task awaits. Raw counts thus mix active bugs, latent footguns, and accepted risks; the merged PRs (RQ3) anchor the active-bug end.
 
 \section{Discussion}
 That defects appear in 24 of 29 analyzed frameworks---including those maintained by major industrial labs---suggests these hazards are a \emph{tooling} gap rather than a knowledge gap: standard CI does not reliably surface them, and they survive review because they are invisible at rest. The clustering of the highest-severity class (CH001) in serving routes and retry loops has direct implications for ML-serving reliability: a single blocking call on a hot path can collapse the concurrency of an entire inference server. The five clean projects show the patterns are avoidable with appropriate linting discipline. We argue AST-level checks of this kind belong in the default CI of AI/ML libraries.
@@ -133,7 +140,7 @@ That defects appear in 24 of 29 analyzed frameworks---including those maintained
 \textbf{Internal.} Static analysis incurs false positives/negatives; we mitigate via the precision analysis (RQ4) and anchor true-positiveness with maintainer merges (RQ3). The submitted PRs are a non-random sample, so the merge rate is an existence proof of true positives, not an unbiased precision estimate. \textbf{External.} The corpus, though popular, may not generalize to all Python ML code. \textbf{Construct.} Maintainer acceptance proxies ``real bug worth fixing,'' but non-merge can reflect process (e.g., required pre-approved issues) rather than invalidity.
 
 \section{Conclusion}
-Async-safety and resource-management anti-patterns are pervasive across popular Python AI/ML frameworks, and a lightweight, zero-dependency AST analyzer surfaces them with demonstrated real-world utility---five fixes merged into widely-used projects. Future work: extend the corpus and checks, add context-sensitivity to reduce false positives (CH004), measure per-KLOC density vs.\ project age/size, and integrate codehound into CI to study defect lifecycles.
+Async-safety and resource-management anti-patterns are pervasive across popular Python AI/ML frameworks, and a lightweight, zero-dependency AST analyzer surfaces them with demonstrated real-world utility---nine fixes merged into widely-used projects and 11 of 12 reviewed submissions confirmed as genuine defects. Future work: extend the corpus and checks, add context-sensitivity to reduce false positives (CH004), measure per-KLOC density vs.\ project age/size, and integrate codehound into CI to study defect lifecycles.
 
 \begin{thebibliography}{00}
 \bibitem{pyasyncio} Python Software Foundation, ``asyncio --- Asynchronous I/O,'' Python documentation. [Online]. Available: \url{https://docs.python.org/3/library/asyncio-task.html}
