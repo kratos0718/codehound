@@ -142,6 +142,9 @@ That defects appear in 24 of 29 analyzed frameworks---including those maintained
 \section{Conclusion}
 Async-safety and resource-management anti-patterns are pervasive across popular Python AI/ML frameworks, and a lightweight, zero-dependency AST analyzer surfaces them with demonstrated real-world utility---nine fixes merged into widely-used projects and 11 of 12 reviewed submissions confirmed as genuine defects. Future work: extend the corpus and checks, add context-sensitivity to reduce false positives (CH004), measure per-KLOC density vs.\ project age/size, and integrate codehound into CI to study defect lifecycles.
 
+\section*{Use of AI-Assisted Tools}
+The author used AI-assisted tools for drafting and language editing of parts of this manuscript. The author designed the study, wrote and ran codehound, submitted the upstream fixes, verified all data and results, and takes full responsibility for the content.
+
 \begin{thebibliography}{00}
 \bibitem{pyasyncio} Python Software Foundation, ``asyncio --- Asynchronous I/O,'' Python documentation. [Online]. Available: \url{https://docs.python.org/3/library/asyncio-task.html}
 \bibitem{ruff} Astral, ``Ruff linter rules (RUF006, ASYNC).'' [Online]. Available: \url{https://docs.astral.sh/ruff/rules/}
