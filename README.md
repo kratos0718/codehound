@@ -11,6 +11,7 @@
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21851079.svg)](https://doi.org/10.5281/zenodo.21851079)
+[![Paper DOI](https://img.shields.io/badge/paper-10.5281%2Fzenodo.24367554-blue)](https://doi.org/10.5281/zenodo.24367554)
 
 **[Try it in your browser — no install](https://kratos0718.github.io/codehound/)** — paste Python, click Scan, see real findings from all 104 checks. Runs entirely client-side via [Pyodide](https://pyodide.org) (Python compiled to WebAssembly); your code never leaves the page.
 
